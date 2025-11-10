@@ -51,6 +51,13 @@ Generate code, corrections, and refactorings that comply with the basic principl
   - Declare necessary types for input arguments and output.
 - Use a single level of abstraction.
 
+### Comments
+
+- Only add comments when the code is complex enough
+- If a function is already self-explanatory do not add comments.
+- Do not add comments for barrels indexes.
+- Do not add comments for .module.ts files
+
 ### Data
 
 - Don't abuse primitive types and encapsulate data in composite types.

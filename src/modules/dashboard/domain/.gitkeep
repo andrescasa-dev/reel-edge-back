@@ -1,0 +1,3 @@
+# Domain layer for dashboard module
+# Will contain domain entities and value objects specific to dashboard
+
