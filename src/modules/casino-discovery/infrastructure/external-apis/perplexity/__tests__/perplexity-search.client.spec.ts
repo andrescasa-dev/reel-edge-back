@@ -1,22 +1,18 @@
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
-import { AxiosError, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
+import Perplexity from '@perplexity-ai/perplexity_ai';
 import { StateAbbreviation } from '../../../../../shared/domain/enums/state.enum';
 import { PerplexityAPIException } from '../../../../../shared/domain/exceptions';
-import { HttpClient } from '../../../../../shared/infrastructure/external-apis/http-client';
 import { RateLimiterService } from '../../../../../shared/infrastructure/rate-limiting';
 import { PerplexitySearchClient } from '../perplexity-search.client';
 
+// Mock the Perplexity SDK
+jest.mock('@perplexity-ai/perplexity_ai');
+
 describe('PerplexitySearchClient', () => {
   let client: PerplexitySearchClient;
-  let mockHttpClient: jest.Mocked<HttpClient>;
+  let mockPerplexityClient: jest.Mocked<Perplexity>;
   let mockRateLimiter: jest.Mocked<RateLimiterService>;
-
-  const mockAxiosConfig: InternalAxiosRequestConfig = {
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  } as InternalAxiosRequestConfig;
 
   const mockConfigService = {
     get: jest.fn((key: string) => {
@@ -30,13 +26,17 @@ describe('PerplexitySearchClient', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
 
-    mockHttpClient = {
-      get: jest.fn(),
-      post: jest.fn(),
-      put: jest.fn(),
-      delete: jest.fn(),
-      isAxiosError: jest.fn(),
-    } as unknown as jest.Mocked<HttpClient>;
+    // Create mock Perplexity client
+    mockPerplexityClient = {
+      search: {
+        create: jest.fn(),
+      },
+    } as unknown as jest.Mocked<Perplexity>;
+
+    // Mock the Perplexity constructor
+    (Perplexity as jest.MockedClass<typeof Perplexity>).mockImplementation(
+      () => mockPerplexityClient,
+    );
 
     mockRateLimiter = {
       execute: jest.fn().mockImplementation(<T>(fn: () => T) => fn()),
@@ -59,408 +59,293 @@ describe('PerplexitySearchClient', () => {
     }).compile();
 
     client = module.get<PerplexitySearchClient>(PerplexitySearchClient);
-
-    Object.defineProperty(client, 'httpClient', {
-      value: mockHttpClient,
-      writable: true,
-    });
   });
 
   describe('searchCasinos', () => {
-    it('should successfully search and parse casinos for a state', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-1',
-          model: 'llama-3.1-sonar-small-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: `Here are the licensed casinos in New Jersey:
-                
-                [
-                  {
-                    "name": "BetMGM Casino",
-                    "website": "https://betmgm.com",
-                    "regulatoryId": "NJ-001"
-                  },
-                  {
-                    "name": "DraftKings Casino",
-                    "website": "https://draftkings.com"
-                  }
-                ]`,
-              },
-              finish_reason: 'stop',
-            },
-          ],
-          citations: [
-            'https://nj.gov/gaming',
-            'https://betmgm.com',
-            'https://draftkings.com',
-          ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
-      };
-
-      mockHttpClient.post.mockResolvedValue(mockResponse);
-
-      const result = await client.searchCasinos(StateAbbreviation.NJ);
-
-      expect(result.casinos).toHaveLength(2);
-      expect(result.casinos[0]).toEqual({
-        name: 'BetMGM Casino',
-        website: 'https://betmgm.com',
-        regulatoryId: 'NJ-001',
-        state: StateAbbreviation.NJ,
-      });
-      expect(result.casinos[1]).toEqual({
-        name: 'DraftKings Casino',
-        website: 'https://draftkings.com',
-        regulatoryId: undefined,
-        state: StateAbbreviation.NJ,
-      });
-      expect(result.citations).toHaveLength(3);
-      // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(mockRateLimiter.execute).toHaveBeenCalledTimes(1);
-      // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(mockHttpClient.post).toHaveBeenCalledWith(
-        '/chat/completions',
-        expect.objectContaining({
-          model: 'llama-3.1-sonar-small-128k-online',
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          messages: expect.arrayContaining([
-            expect.objectContaining({
-              role: 'user',
-            }),
-          ]),
-        }),
-        expect.objectContaining({
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          headers: expect.objectContaining({
-            Authorization: 'Bearer test-api-key',
-          }),
-        }),
-      );
-    });
-
-    it('should return empty array when no casinos found', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-2',
-          model: 'llama-3.1-sonar-small-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: 'No licensed casinos found. []',
-              },
-              finish_reason: 'stop',
-            },
-          ],
-          citations: [],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
-      };
-
-      mockHttpClient.post.mockResolvedValue(mockResponse);
-
-      const result = await client.searchCasinos(StateAbbreviation.WV);
-
-      expect(result.casinos).toHaveLength(0);
-      expect(result.citations).toHaveLength(0);
-    });
-
-    it('should handle websites without protocol', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-3',
-          model: 'llama-3.1-sonar-small-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: `[
-                  {
-                    "name": "Test Casino",
-                    "website": "testcasino.com"
-                  }
-                ]`,
-              },
-              finish_reason: 'stop',
-            },
-          ],
-          citations: [],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
-      };
-
-      mockHttpClient.post.mockResolvedValue(mockResponse);
-
-      const result = await client.searchCasinos(StateAbbreviation.PA);
-
-      expect(result.casinos[0].website).toBe('https://testcasino.com');
-    });
-
-    it('should clean casino names properly', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-4',
-          model: 'llama-3.1-sonar-small-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: `[
-                  {
-                    "name": "  Casino   Name  ",
-                    "website": "https://casino.com"
-                  },
-                  {
-                    "name": "\\"Quoted Casino\\"",
-                    "website": "https://quoted.com"
-                  }
-                ]`,
-              },
-              finish_reason: 'stop',
-            },
-          ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
-      };
-
-      mockHttpClient.post.mockResolvedValue(mockResponse);
-
-      const result = await client.searchCasinos(StateAbbreviation.MI);
-
-      expect(result.casinos[0].name).toBe('Casino Name');
-      expect(result.casinos[1].name).toBe('Quoted Casino');
-    });
-
-    it('should return empty array when no valid JSON found in response', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-5',
-          model: 'llama-3.1-sonar-small-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: 'This is not valid JSON',
-              },
-              finish_reason: 'stop',
-            },
-          ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
-      };
-
-      mockHttpClient.post.mockResolvedValue(mockResponse);
-
-      const result = await client.searchCasinos(StateAbbreviation.NJ);
-
-      expect(result.casinos).toHaveLength(0);
-      expect(result.citations).toHaveLength(0);
-    });
-
-    it('should handle timeout errors', async () => {
-      const timeoutError = {
-        code: 'ECONNABORTED',
-        message: 'timeout',
-        isAxiosError: true,
-      } as AxiosError;
-
-      mockHttpClient.post.mockRejectedValue(timeoutError);
-      mockHttpClient.isAxiosError.mockReturnValue(true);
-
-      await expect(client.searchCasinos(StateAbbreviation.NJ)).rejects.toThrow(
-        PerplexityAPIException,
-      );
-      await expect(client.searchCasinos(StateAbbreviation.NJ)).rejects.toThrow(
-        /Request timeout/,
-      );
-    });
-
-    it('should handle network errors', async () => {
-      const networkError = {
-        message: 'Network error',
-        isAxiosError: true,
-        response: undefined,
-      } as AxiosError;
-
-      mockHttpClient.post.mockRejectedValue(networkError);
-      mockHttpClient.isAxiosError.mockReturnValue(true);
-
-      await expect(client.searchCasinos(StateAbbreviation.NJ)).rejects.toThrow(
-        PerplexityAPIException,
-      );
-      await expect(client.searchCasinos(StateAbbreviation.NJ)).rejects.toThrow(
-        /Network error/,
-      );
-    });
-
-    it('should handle 401 unauthorized errors', async () => {
-      const authError = {
-        message: 'Unauthorized',
-        isAxiosError: true,
-        response: {
-          status: 401,
-          data: {},
-        },
-      } as AxiosError;
-
-      mockHttpClient.post.mockRejectedValue(authError);
-      mockHttpClient.isAxiosError.mockReturnValue(true);
-
-      await expect(client.searchCasinos(StateAbbreviation.NJ)).rejects.toThrow(
-        PerplexityAPIException,
-      );
-      await expect(client.searchCasinos(StateAbbreviation.NJ)).rejects.toThrow(
-        /Invalid API key/,
-      );
-    });
-
-    it('should handle 429 rate limit errors with retry', async () => {
-      const rateLimitError: Partial<AxiosError> = {
-        message: 'Too Many Requests',
-        isAxiosError: true,
-        name: 'AxiosError',
-        toJSON: () => ({}),
-        response: {
-          status: 429,
-          statusText: 'Too Many Requests',
-          headers: {
-            'retry-after': '60',
+    it('should successfully search and parse casinos from search results', async () => {
+      const mockSearchResponse = {
+        results: [
+          {
+            title: 'BetMGM Casino - Official Site',
+            url: 'https://casino.betmgm.com',
+            snippet:
+              'BetMGM Casino offers the best online gaming experience in New Jersey',
+            date: '2024-01-15',
+            last_updated: '2024-01-20',
           },
-          data: {},
-          config: mockAxiosConfig,
-        },
+          {
+            title: 'DraftKings Online Casino',
+            url: 'https://casino.draftkings.com',
+            snippet: 'Play at DraftKings Casino in NJ',
+            date: '2024-01-10',
+            last_updated: '2024-01-18',
+          },
+          {
+            title: 'Casino Review Site - Best Bonuses',
+            url: 'https://casinoreviews.com/best-bonuses',
+            snippet: 'Review of the best casino bonuses',
+            date: '2024-01-01',
+            last_updated: '2024-01-05',
+          },
+        ],
+        id: 'search-123',
       };
 
-      mockHttpClient.post.mockRejectedValue(rateLimitError);
-      mockHttpClient.isAxiosError.mockReturnValue(true);
-
-      await expect(client.searchCasinos(StateAbbreviation.NJ)).rejects.toThrow(
-        PerplexityAPIException,
+      mockPerplexityClient.search.create.mockResolvedValue(
+        mockSearchResponse as any,
       );
-      // eslint-disable-next-line @typescript-eslint/unbound-method
+
+      const result = await client.searchCasinos(StateAbbreviation.NJ);
+
+      expect(result.casinos).toHaveLength(2); // Only 2 because review site is excluded
+      expect(result.casinos[0].name).toBe('BetMGM');
+      expect(result.casinos[0].website).toBe('https://casino.betmgm.com');
+      expect(result.casinos[0].state).toBe(StateAbbreviation.NJ);
+
+      expect(result.casinos[1].name).toBe('DraftKings Online');
+      expect(result.casinos[1].website).toBe('https://casino.draftkings.com');
+
+      expect(result.searchResults).toHaveLength(3);
+      expect(result.searchResults[0].title).toBe('BetMGM Casino - Official Site');
+      expect(result.searchResults[0].url).toBe('https://casino.betmgm.com');
+
+      expect(mockPerplexityClient.search.create).toHaveBeenCalledWith({
+        query: expect.stringContaining('New Jersey'),
+        max_results: 20,
+        max_tokens_per_page: 2048,
+      });
+
+      expect(mockRateLimiter.execute).toHaveBeenCalledTimes(1);
+    });
+
+    it('should filter out duplicate casinos', async () => {
+      const mockSearchResponse = {
+        results: [
+          {
+            title: 'BetMGM Casino - Official Site',
+            url: 'https://casino.betmgm.com',
+            snippet: 'BetMGM Casino offers gaming',
+            date: '2024-01-15',
+            last_updated: '2024-01-20',
+          },
+          {
+            title: 'BetMGM Casino - Promotions Page',
+            url: 'https://casino.betmgm.com/promotions',
+            snippet: 'BetMGM Casino promotions',
+            date: '2024-01-15',
+            last_updated: '2024-01-20',
+          },
+        ],
+        id: 'search-123',
+      };
+
+      mockPerplexityClient.search.create.mockResolvedValue(
+        mockSearchResponse as any,
+      );
+
+      const result = await client.searchCasinos(StateAbbreviation.NJ);
+
+      expect(result.casinos).toHaveLength(1); // Duplicate filtered
+      expect(result.casinos[0].name).toBe('BetMGM');
+    });
+
+    it('should filter out review and affiliate sites', async () => {
+      const mockSearchResponse = {
+        results: [
+          {
+            title: 'Casino Review: Best Sites 2024',
+            url: 'https://casinoreviews.com',
+            snippet: 'Review of casinos',
+            date: '2024-01-01',
+            last_updated: '2024-01-05',
+          },
+          {
+            title: 'Affiliate Casino Guide',
+            url: 'https://casinoaffiliate.com',
+            snippet: 'Affiliate guide',
+            date: '2024-01-01',
+            last_updated: '2024-01-05',
+          },
+          {
+            title: 'Casino Bonus Comparisons',
+            url: 'https://casinobonus.com',
+            snippet: 'Compare bonuses',
+            date: '2024-01-01',
+            last_updated: '2024-01-05',
+          },
+        ],
+        id: 'search-123',
+      };
+
+      mockPerplexityClient.search.create.mockResolvedValue(
+        mockSearchResponse as any,
+      );
+
+      const result = await client.searchCasinos(StateAbbreviation.NJ);
+
+      expect(result.casinos).toHaveLength(0); // All filtered out
+      expect(result.searchResults).toHaveLength(3); // But search results preserved
+    });
+
+    it('should handle empty search results', async () => {
+      const mockSearchResponse = {
+        results: [],
+        id: 'search-123',
+      };
+
+      mockPerplexityClient.search.create.mockResolvedValue(
+        mockSearchResponse as any,
+      );
+
+      const result = await client.searchCasinos(StateAbbreviation.NJ);
+
+      expect(result.casinos).toHaveLength(0);
+      expect(result.searchResults).toHaveLength(0);
+    });
+
+    it('should handle results with no valid casino names', async () => {
+      const mockSearchResponse = {
+        results: [
+          {
+            title: 'Gambling Commission Website',
+            url: 'https://nj.gov/gaming',
+            snippet: 'Official NJ gaming commission',
+            date: '2024-01-01',
+            last_updated: '2024-01-05',
+          },
+        ],
+        id: 'search-123',
+      };
+
+      mockPerplexityClient.search.create.mockResolvedValue(
+        mockSearchResponse as any,
+      );
+
+      const result = await client.searchCasinos(StateAbbreviation.NJ);
+
+      expect(result.casinos).toHaveLength(0);
+    });
+  });
+
+  describe('Error Handling', () => {
+    it('should handle rate limit errors', async () => {
+      const rateLimitError = new Perplexity.RateLimitError('Rate limit exceeded');
+      mockPerplexityClient.search.create.mockRejectedValue(rateLimitError);
+
+      await expect(
+        client.searchCasinos(StateAbbreviation.NJ),
+      ).rejects.toThrow(PerplexityAPIException);
+
       expect(mockRateLimiter.handleRateLimitError).toHaveBeenCalledWith(60);
     });
 
-    it('should handle 500 API errors', async () => {
-      const apiError = {
-        message: 'Internal Server Error',
-        isAxiosError: true,
-        response: {
-          status: 500,
-          data: {},
-        },
-      } as AxiosError;
+    it('should handle bad request errors', async () => {
+      const badRequestError = new Perplexity.BadRequestError('Invalid query');
+      mockPerplexityClient.search.create.mockRejectedValue(badRequestError);
 
-      mockHttpClient.post.mockRejectedValue(apiError);
-      mockHttpClient.isAxiosError.mockReturnValue(true);
-
-      await expect(client.searchCasinos(StateAbbreviation.NJ)).rejects.toThrow(
-        PerplexityAPIException,
-      );
-      await expect(client.searchCasinos(StateAbbreviation.NJ)).rejects.toThrow(
-        /API returned/,
-      );
+      await expect(
+        client.searchCasinos(StateAbbreviation.NJ),
+      ).rejects.toThrow(PerplexityAPIException);
     });
 
-    it('should filter out invalid casino data', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-6',
-          model: 'llama-3.1-sonar-small-128k-online',
-          choices: [
+    it('should handle API errors', async () => {
+      const apiError = new Perplexity.APIError(
+        500,
+        {} as any,
+        'Internal server error',
+        {},
+      );
+      mockPerplexityClient.search.create.mockRejectedValue(apiError);
+
+      await expect(
+        client.searchCasinos(StateAbbreviation.NJ),
+      ).rejects.toThrow(PerplexityAPIException);
+    });
+
+    it('should handle generic errors', async () => {
+      const genericError = new Error('Network error');
+      mockPerplexityClient.search.create.mockRejectedValue(genericError);
+
+      await expect(
+        client.searchCasinos(StateAbbreviation.NJ),
+      ).rejects.toThrow(PerplexityAPIException);
+    });
+  });
+
+  describe('Configuration', () => {
+    it('should throw error if API key is not configured', async () => {
+      await expect(
+        Test.createTestingModule({
+          providers: [
+            PerplexitySearchClient,
             {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: `[
-                  {
-                    "name": "Valid Casino",
-                    "website": "https://valid.com"
-                  },
-                  {
-                    "website": "https://noname.com"
-                  },
-                  {
-                    "name": null,
-                    "website": "https://nullname.com"
-                  },
-                  "invalid string entry"
-                ]`,
+              provide: ConfigService,
+              useValue: {
+                get: jest.fn().mockReturnValue(''),
               },
-              finish_reason: 'stop',
+            },
+            {
+              provide: RateLimiterService,
+              useValue: mockRateLimiter,
             },
           ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
+        }).compile(),
+      ).rejects.toThrow('Perplexity API key is required');
+    });
+  });
+
+  describe('Multiple States', () => {
+    it.each([
+      [StateAbbreviation.NJ, 'New Jersey'],
+      [StateAbbreviation.MI, 'Michigan'],
+      [StateAbbreviation.PA, 'Pennsylvania'],
+      [StateAbbreviation.WV, 'West Virginia'],
+    ])(
+      'should create correct search query for %s (%s)',
+      async (state, stateName) => {
+        const mockSearchResponse = {
+          results: [],
+          id: 'search-123',
+        };
+
+        mockPerplexityClient.search.create.mockResolvedValue(
+          mockSearchResponse as any,
+        );
+
+        await client.searchCasinos(state);
+
+        expect(mockPerplexityClient.search.create).toHaveBeenCalledWith({
+          query: expect.stringContaining(stateName),
+          max_results: 20,
+          max_tokens_per_page: 2048,
+        });
+      },
+    );
+  });
+
+  describe('URL Cleaning', () => {
+    it('should normalize URLs correctly', async () => {
+      const mockSearchResponse = {
+        results: [
+          {
+            title: 'BetMGM Casino',
+            url: 'HTTPS://CASINO.BETMGM.COM/PATH',
+            snippet: 'BetMGM Casino',
+            date: '2024-01-15',
+            last_updated: '2024-01-20',
+          },
+        ],
+        id: 'search-123',
       };
 
-      mockHttpClient.post.mockResolvedValue(mockResponse);
+      mockPerplexityClient.search.create.mockResolvedValue(
+        mockSearchResponse as any,
+      );
 
       const result = await client.searchCasinos(StateAbbreviation.NJ);
 
-      expect(result.casinos).toHaveLength(1);
-      expect(result.casinos[0].name).toBe('Valid Casino');
-    });
-
-    it('should use rate limiter for request execution', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-7',
-          model: 'llama-3.1-sonar-small-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '[]',
-              },
-              finish_reason: 'stop',
-            },
-          ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
-      };
-
-      mockHttpClient.post.mockResolvedValue(mockResponse);
-
-      await client.searchCasinos(StateAbbreviation.NJ);
-
-      // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(mockRateLimiter.execute).toHaveBeenCalledTimes(1);
-      // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(mockRateLimiter.execute).toHaveBeenCalledWith(
-        expect.any(Function),
+      expect(result.casinos[0].website).toBe(
+        'https://casino.betmgm.com/path',
       );
     });
   });

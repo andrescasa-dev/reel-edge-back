@@ -1,46 +1,32 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AxiosError } from 'axios';
+import Perplexity from '@perplexity-ai/perplexity_ai';
 import { StateAbbreviation } from '../../../../shared/domain/enums/state.enum';
 import { PerplexityAPIException } from '../../../../shared/domain/exceptions';
-import { HttpClient } from '../../../../shared/infrastructure/external-apis/http-client';
 import { RateLimiterService } from '../../../../shared/infrastructure/rate-limiting';
-import {
-  DiscoveredCasino,
-  PerplexitySearchResponse,
-  RawCasinoData,
-} from './perplexity-search.types';
+import { DiscoveredCasino } from './perplexity-search.types';
 
 /**
  * Client for Perplexity Search API - used for casino discovery
- * Uses cheaper Search API (not Sonar) for simple information retrieval
+ * Uses Search API to get ranked web results for casino information
  */
 @Injectable()
 export class PerplexitySearchClient {
   private readonly logger = new Logger(PerplexitySearchClient.name);
-  private readonly httpClient: HttpClient;
-  private readonly apiKey: string;
+  private readonly client: Perplexity;
 
   constructor(
     private readonly configService: ConfigService,
     private readonly rateLimiter: RateLimiterService,
   ) {
-    this.apiKey = this.configService.get<string>('PERPLEXITY_API_KEY') || '';
+    const apiKey = this.configService.get<string>('PERPLEXITY_API_KEY') || '';
 
-    if (!this.apiKey) {
+    if (!apiKey) {
       this.logger.error('PERPLEXITY_API_KEY is not configured');
       throw new Error('Perplexity API key is required');
     }
 
-    this.httpClient = new HttpClient(
-      {
-        baseURL: 'https://api.perplexity.ai',
-        timeout: 60000,
-        maxRetries: 3,
-        retryDelay: 2000,
-      },
-      PerplexitySearchClient.name,
-    );
+    this.client = new Perplexity({ apiKey });
 
     this.logger.log('PerplexitySearchClient initialized');
   }
@@ -51,25 +37,29 @@ export class PerplexitySearchClient {
    */
   async searchCasinos(state: StateAbbreviation): Promise<{
     casinos: DiscoveredCasino[];
-    citations: string[];
+    searchResults: Array<{ title: string; url: string; snippet: string }>;
   }> {
     this.logger.log(`Searching for casinos in state: ${state}`);
 
-    const prompt = this.buildSearchPrompt(state);
+    const query = this.buildSearchQuery(state);
 
     try {
       const response = await this.rateLimiter.execute(() =>
-        this.makeSearchRequest(prompt),
+        this.makeSearchRequest(query),
       );
 
-      const casinos = this.parseCasinoResponse(response.content, state);
-      const citations = response.citations || [];
+      const casinos = this.parseSearchResults(response.results, state);
+      const searchResults = response.results.map((r) => ({
+        title: r.title,
+        url: r.url,
+        snippet: r.snippet || '',
+      }));
 
       this.logger.log(
-        `Found ${casinos.length} casinos in ${state}. Citations: ${citations.length}`,
+        `Found ${casinos.length} casinos in ${state} from ${searchResults.length} search results`,
       );
 
-      return { casinos, citations };
+      return { casinos, searchResults };
     } catch (error) {
       this.logger.error(`Failed to search casinos for state ${state}`, error);
       throw this.handleError(error);
@@ -77,10 +67,10 @@ export class PerplexitySearchClient {
   }
 
   /**
-   * Build search prompt for casino discovery
-   * Prioritizes official sources and regulatory information
+   * Build search query for casino discovery
+   * Creates targeted search queries for the Search API
    */
-  private buildSearchPrompt(state: StateAbbreviation): string {
+  private buildSearchQuery(state: StateAbbreviation): string {
     const stateNames: Record<StateAbbreviation, string> = {
       NJ: 'New Jersey',
       MI: 'Michigan',
@@ -90,160 +80,155 @@ export class PerplexitySearchClient {
 
     const stateName = stateNames[state];
 
-    return `You are a research assistant specialized in gathering accurate information about regulated online casinos.
-
-TASK: Find all legally licensed and operating online casinos in ${stateName} (${state}).
-
-REQUIREMENTS:
-1. ONLY include casinos that are:
-   - Legally licensed and regulated in ${stateName}
-   - Currently accepting players from ${stateName}
-   - Operating online (not just land-based)
-
-2. For EACH casino, provide:
-   - Official casino name
-   - Official website URL (e.g., https://casinoname.com)
-   - Regulatory ID or license number (if available from official sources)
-
-3. PRIORITIZE these official sources:
-   - State gambling commission websites
-   - Official regulatory authority sites
-   - Licensed casino operators' official websites
-   - Government regulatory databases
-
-4. DO NOT include:
-   - Affiliate marketing sites
-   - Casino review sites
-   - Social casinos (sweepstakes casinos)
-   - Unlicensed or offshore casinos
-
-FORMAT your response as a JSON array:
-[
-  {
-    "name": "Casino Name",
-    "website": "https://website.com",
-    "regulatoryId": "License-123" // Optional, only if found from official source
-  }
-]
-
-If you cannot find any licensed casinos, return an empty array: []
-
-Focus on accuracy and official sources. It's better to return fewer verified casinos than to include unverified ones.`;
+    // Search query optimized for finding official casino information
+    return `licensed online casinos ${stateName} ${state} gambling commission official website`;
   }
 
   /**
    * Make API request to Perplexity Search
    */
-  private async makeSearchRequest(
-    prompt: string,
-  ): Promise<{ content: string; citations?: string[] }> {
-    this.logger.debug('Sending search request to Perplexity API');
-    this.logger.debug(`Prompt: ${prompt.substring(0, 200)}...`);
+  private async makeSearchRequest(query: string): Promise<{
+    results: Array<{
+      title: string;
+      url: string;
+      snippet?: string;
+      date?: string;
+      lastUpdated?: string;
+    }>;
+  }> {
+    this.logger.debug('Sending search request to Perplexity Search API');
+    this.logger.debug(`Query: ${query}`);
 
     try {
-      const response = await this.httpClient.post<PerplexitySearchResponse>(
-        '/chat/completions',
-        {
-          model: 'llama-3.1-sonar-small-128k-online',
-          messages: [
-            {
-              role: 'system',
-              content:
-                'You are a precise research assistant. Always cite official sources. Return data in valid JSON format.',
-            },
-            {
-              role: 'user',
-              content: prompt,
-            },
-          ],
-          temperature: 0.2,
-          max_tokens: 2000,
-          return_citations: true,
-          search_recency_filter: 'month',
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
-          },
-        },
-      );
+      const response = await this.client.search.create({
+        query,
+        max_results: 20, // Maximum results for comprehensive discovery
+        max_tokens_per_page: 2048, // Comprehensive content extraction
+      });
 
-      const content = response.data.choices[0]?.message?.content || '';
-      const citations = response.data.citations || [];
+      const results = response.results.map((result) => ({
+        title: result.title,
+        url: result.url,
+        snippet: result.snippet || undefined,
+        date: result.date || undefined,
+        lastUpdated: result.last_updated || undefined,
+      }));
 
-      this.logger.debug(`Response received. Content length: ${content.length}`);
-      this.logger.debug(`Citations: ${citations.length}`);
-      this.logger.debug(`Raw response: ${content.substring(0, 500)}...`);
+      this.logger.debug(`Response received. Results: ${results.length}`);
 
-      return { content, citations };
+      return { results };
     } catch (error) {
-      if (this.httpClient.isAxiosError(error)) {
-        const axiosError = error as AxiosError;
-        if (axiosError.response?.status === 429) {
-          const headers = axiosError.response.headers as Record<
-            string,
-            unknown
-          >;
-          const retryAfterHeader = headers['retry-after'];
-          const retryAfter = parseInt(
-            typeof retryAfterHeader === 'string' ? retryAfterHeader : '60',
-          );
-          await this.rateLimiter.handleRateLimitError(retryAfter);
-          throw PerplexityAPIException.rateLimitExceeded(retryAfter);
-        }
+      if (error instanceof Perplexity.RateLimitError) {
+        const retryAfter = 60; // Default retry after 60 seconds
+        await this.rateLimiter.handleRateLimitError(retryAfter);
+        throw PerplexityAPIException.rateLimitExceeded(retryAfter);
       }
       throw error;
     }
   }
 
   /**
-   * Parse casino information from AI response
-   * Extracts structured data about casinos
+   * Parse search results to extract casino information
+   * Processes web search results to identify casinos
    */
-  private parseCasinoResponse(
-    content: string,
+  private parseSearchResults(
+    results: Array<{
+      title: string;
+      url: string;
+      snippet?: string;
+    }>,
     state: StateAbbreviation,
   ): DiscoveredCasino[] {
-    try {
-      const jsonMatch = content.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) {
-        this.logger.warn('No JSON array found in response');
-        return [];
+    const casinos: DiscoveredCasino[] = [];
+    const seenNames = new Set<string>();
+
+    for (const result of results) {
+      // Extract casino name from title or snippet
+      const casinoName = this.extractCasinoName(result.title, result.snippet);
+
+      if (!casinoName || seenNames.has(casinoName.toLowerCase())) {
+        continue;
       }
 
-      const jsonString = jsonMatch[0];
-      const parsedData: unknown = JSON.parse(jsonString);
+      // Check if URL looks like an official casino website
+      if (this.isOfficialCasinoUrl(result.url)) {
+        seenNames.add(casinoName.toLowerCase());
 
-      if (!Array.isArray(parsedData)) {
-        this.logger.warn('Parsed data is not an array');
-        return [];
-      }
-
-      const casinos: DiscoveredCasino[] = parsedData
-        .filter((item: unknown): item is RawCasinoData => {
-          return (
-            item !== null &&
-            typeof item === 'object' &&
-            'name' in item &&
-            typeof (item as RawCasinoData).name === 'string'
-          );
-        })
-        .map((item: RawCasinoData) => ({
-          name: this.cleanCasinoName(item.name!),
-          website: this.cleanWebsite(item.website),
-          regulatoryId: item.regulatoryId || undefined,
+        casinos.push({
+          name: casinoName,
+          website: this.cleanWebsite(result.url),
           state,
-        }));
-
-      this.logger.log(`Parsed ${casinos.length} casinos from response`);
-      return casinos;
-    } catch (error) {
-      this.logger.error('Failed to parse casino response', error);
-      throw PerplexityAPIException.invalidResponse(
-        'Could not parse casino data from response',
-      );
+        });
+      }
     }
+
+    this.logger.log(
+      `Extracted ${casinos.length} unique casinos from search results`,
+    );
+    return casinos;
+  }
+
+  /**
+   * Extract casino name from search result
+   */
+  private extractCasinoName(title: string, snippet?: string): string | null {
+    // Common patterns for casino names in titles
+    const patterns = [
+      /^([^-|]+) (?:Casino|Online Casino|Gaming)/i,
+      /^(.+?) - (?:Official Site|Online Casino)/i,
+      /([A-Z][a-zA-Z\s&]+(?:Casino|Bet|Gaming|Sportsbook))/,
+    ];
+
+    for (const pattern of patterns) {
+      const match = title.match(pattern);
+      if (match && match[1]) {
+        return this.cleanCasinoName(match[1]);
+      }
+    }
+
+    // Try extracting from snippet
+    if (snippet) {
+      const snippetMatch = snippet.match(
+        /([A-Z][a-zA-Z\s&]+(?:Casino|Bet|Gaming|Sportsbook))/,
+      );
+      if (snippetMatch && snippetMatch[1]) {
+        return this.cleanCasinoName(snippetMatch[1]);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Check if URL appears to be an official casino website
+   */
+  private isOfficialCasinoUrl(url: string): boolean {
+    const urlLower = url.toLowerCase();
+
+    // Exclude review sites, affiliates, and directories
+    const excludePatterns = [
+      'review',
+      'affiliate',
+      'bonus',
+      'guide',
+      'compare',
+      'reddit',
+      'forum',
+      'wikipedia',
+      'gambling.com',
+      'casino.org',
+    ];
+
+    for (const pattern of excludePatterns) {
+      if (urlLower.includes(pattern)) {
+        return false;
+      }
+    }
+
+    // Must include casino-related terms in domain
+    const includePatterns = ['casino', 'bet', 'gaming', 'sportsbook'];
+
+    return includePatterns.some((pattern) => urlLower.includes(pattern));
   }
 
   /**
@@ -281,29 +266,19 @@ Focus on accuracy and official sources. It's better to return fewer verified cas
       return error;
     }
 
-    if (this.httpClient.isAxiosError(error)) {
-      const axiosError = error as AxiosError;
+    if (error instanceof Perplexity.BadRequestError) {
+      return PerplexityAPIException.invalidResponse(
+        'Invalid search request: ' + error.message,
+      );
+    }
 
-      if (axiosError.code === 'ECONNABORTED') {
-        return PerplexityAPIException.timeout();
-      }
+    if (error instanceof Perplexity.RateLimitError) {
+      return PerplexityAPIException.rateLimitExceeded(60);
+    }
 
-      if (!axiosError.response) {
-        return PerplexityAPIException.networkError(axiosError);
-      }
-
-      const status = axiosError.response.status;
-      const message = axiosError.message || 'Unknown error';
-
-      if (status === 401 || status === 403) {
-        return PerplexityAPIException.invalidApiKey();
-      }
-
-      if (status === 429) {
-        return PerplexityAPIException.rateLimitExceeded();
-      }
-
-      return PerplexityAPIException.apiError(status, message);
+    if (error instanceof Perplexity.APIError) {
+      const status = typeof error.status === 'number' ? error.status : 500;
+      return PerplexityAPIException.apiError(status, error.message);
     }
 
     if (error instanceof Error) {
