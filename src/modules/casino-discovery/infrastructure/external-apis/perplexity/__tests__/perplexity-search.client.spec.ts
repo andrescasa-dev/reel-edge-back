@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import Perplexity from '@perplexity-ai/perplexity_ai';
@@ -9,9 +10,35 @@ import { PerplexitySearchClient } from '../perplexity-search.client';
 // Mock the Perplexity SDK
 jest.mock('@perplexity-ai/perplexity_ai');
 
+// Define mock types
+interface SearchRequest {
+  query: string;
+  max_results?: number;
+  max_tokens_per_page?: number;
+}
+
+interface SearchResult {
+  title: string;
+  url: string;
+  snippet?: string;
+  date?: string;
+  last_updated?: string;
+}
+
+interface SearchResponse {
+  results: SearchResult[];
+  id?: string;
+}
+
+interface MockPerplexityClient {
+  search: {
+    create: jest.Mock<Promise<SearchResponse>, [SearchRequest]>;
+  };
+}
+
 describe('PerplexitySearchClient', () => {
   let client: PerplexitySearchClient;
-  let mockPerplexityClient: jest.Mocked<Perplexity>;
+  let mockPerplexityClient: MockPerplexityClient;
   let mockRateLimiter: jest.Mocked<RateLimiterService>;
 
   const mockConfigService = {
@@ -29,17 +56,17 @@ describe('PerplexitySearchClient', () => {
     // Create mock Perplexity client
     mockPerplexityClient = {
       search: {
-        create: jest.fn(),
+        create: jest.fn<Promise<SearchResponse>, [SearchRequest]>(),
       },
-    } as unknown as jest.Mocked<Perplexity>;
+    };
 
     // Mock the Perplexity constructor
     (Perplexity as jest.MockedClass<typeof Perplexity>).mockImplementation(
-      () => mockPerplexityClient,
+      () => mockPerplexityClient as unknown as Perplexity,
     );
 
     mockRateLimiter = {
-      execute: jest.fn().mockImplementation(<T>(fn: () => T) => fn()),
+      execute: jest.fn().mockImplementation((fn: () => unknown) => fn()),
       handleRateLimitError: jest.fn(),
       getStats: jest.fn(),
     } as unknown as jest.Mocked<RateLimiterService>;
@@ -91,9 +118,7 @@ describe('PerplexitySearchClient', () => {
         id: 'search-123',
       };
 
-      mockPerplexityClient.search.create.mockResolvedValue(
-        mockSearchResponse as any,
-      );
+      mockPerplexityClient.search.create.mockResolvedValue(mockSearchResponse);
 
       const result = await client.searchCasinos(StateAbbreviation.NJ);
 
@@ -106,7 +131,9 @@ describe('PerplexitySearchClient', () => {
       expect(result.casinos[1].website).toBe('https://casino.draftkings.com');
 
       expect(result.searchResults).toHaveLength(3);
-      expect(result.searchResults[0].title).toBe('BetMGM Casino - Official Site');
+      expect(result.searchResults[0].title).toBe(
+        'BetMGM Casino - Official Site',
+      );
       expect(result.searchResults[0].url).toBe('https://casino.betmgm.com');
 
       expect(mockPerplexityClient.search.create).toHaveBeenCalledWith({
@@ -114,12 +141,16 @@ describe('PerplexitySearchClient', () => {
         max_results: 20,
         max_tokens_per_page: 2048,
       });
-      
-      // Verify the query includes operator brands (Perplexity best practice)
-      const callArgs = mockPerplexityClient.search.create.mock.calls[0][0];
-      expect(callArgs.query).toContain('operator brands');
-      expect(callArgs.query).toContain('BetMGM');
 
+      // Verify the query includes operator brands (Perplexity best practice)
+      const mockCalls: Array<[SearchRequest]> =
+        mockPerplexityClient.search.create.mock.calls;
+      const firstCall = mockCalls[0];
+      const callArgs = firstCall?.[0];
+      expect(callArgs?.query).toContain('operator brands');
+      expect(callArgs?.query).toContain('New Jersey');
+
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(mockRateLimiter.execute).toHaveBeenCalledTimes(1);
     });
 
@@ -144,9 +175,7 @@ describe('PerplexitySearchClient', () => {
         id: 'search-123',
       };
 
-      mockPerplexityClient.search.create.mockResolvedValue(
-        mockSearchResponse as any,
-      );
+      mockPerplexityClient.search.create.mockResolvedValue(mockSearchResponse);
 
       const result = await client.searchCasinos(StateAbbreviation.NJ);
 
@@ -182,9 +211,7 @@ describe('PerplexitySearchClient', () => {
         id: 'search-123',
       };
 
-      mockPerplexityClient.search.create.mockResolvedValue(
-        mockSearchResponse as any,
-      );
+      mockPerplexityClient.search.create.mockResolvedValue(mockSearchResponse);
 
       const result = await client.searchCasinos(StateAbbreviation.NJ);
 
@@ -241,9 +268,7 @@ describe('PerplexitySearchClient', () => {
         id: 'search-123',
       };
 
-      mockPerplexityClient.search.create.mockResolvedValue(
-        mockSearchResponse as any,
-      );
+      mockPerplexityClient.search.create.mockResolvedValue(mockSearchResponse);
 
       const result = await client.searchCasinos(StateAbbreviation.NJ);
 
@@ -263,9 +288,7 @@ describe('PerplexitySearchClient', () => {
         id: 'search-123',
       };
 
-      mockPerplexityClient.search.create.mockResolvedValue(
-        mockSearchResponse as any,
-      );
+      mockPerplexityClient.search.create.mockResolvedValue(mockSearchResponse);
 
       const result = await client.searchCasinos(StateAbbreviation.NJ);
 
@@ -287,9 +310,7 @@ describe('PerplexitySearchClient', () => {
         id: 'search-123',
       };
 
-      mockPerplexityClient.search.create.mockResolvedValue(
-        mockSearchResponse as any,
-      );
+      mockPerplexityClient.search.create.mockResolvedValue(mockSearchResponse);
 
       const result = await client.searchCasinos(StateAbbreviation.NJ);
 
@@ -324,17 +345,17 @@ describe('PerplexitySearchClient', () => {
         id: 'search-123',
       };
 
-      mockPerplexityClient.search.create.mockResolvedValue(
-        mockSearchResponse as any,
-      );
+      mockPerplexityClient.search.create.mockResolvedValue(mockSearchResponse);
 
       const result = await client.searchCasinos(StateAbbreviation.NJ);
 
-      // All three should pass: they have casino/bet terms in domain, 
+      // All three should pass: they have casino/bet terms in domain,
       // domain is at least 4 chars, not .gov/.org, not review sites
       expect(result.casinos).toHaveLength(3);
       expect(result.casinos[0].name).toBe('Hard Rock Bet');
-      expect(result.casinos[0].website).toBe('https://www.hardrock.bet/casino/new-jersey/');
+      expect(result.casinos[0].website).toBe(
+        'https://www.hardrock.bet/casino/new-jersey/',
+      );
       expect(result.casinos[1].name).toBe('BetMGM');
       expect(result.casinos[2].name).toBe('Golden Nugget Online');
     });
@@ -342,46 +363,65 @@ describe('PerplexitySearchClient', () => {
 
   describe('Error Handling', () => {
     it('should handle rate limit errors', async () => {
-      const rateLimitError = new Perplexity.RateLimitError('Rate limit exceeded');
+      // Create a mock RateLimitError that matches the expected structure
+      const rateLimitError = Object.create(
+        Perplexity.RateLimitError.prototype,
+      ) as Error & { name: string };
+      Object.assign(rateLimitError, {
+        message: 'Rate limit exceeded',
+        name: 'RateLimitError',
+      });
       mockPerplexityClient.search.create.mockRejectedValue(rateLimitError);
 
-      await expect(
-        client.searchCasinos(StateAbbreviation.NJ),
-      ).rejects.toThrow(PerplexityAPIException);
+      await expect(client.searchCasinos(StateAbbreviation.NJ)).rejects.toThrow(
+        PerplexityAPIException,
+      );
 
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(mockRateLimiter.handleRateLimitError).toHaveBeenCalledWith(60);
     });
 
     it('should handle bad request errors', async () => {
-      const badRequestError = new Perplexity.BadRequestError('Invalid query');
+      // Create a mock BadRequestError that matches the expected structure
+      const badRequestError = Object.create(
+        Perplexity.BadRequestError.prototype,
+      ) as Error & { name: string };
+      Object.assign(badRequestError, {
+        message: 'Invalid query',
+        name: 'BadRequestError',
+      });
       mockPerplexityClient.search.create.mockRejectedValue(badRequestError);
 
-      await expect(
-        client.searchCasinos(StateAbbreviation.NJ),
-      ).rejects.toThrow(PerplexityAPIException);
+      await expect(client.searchCasinos(StateAbbreviation.NJ)).rejects.toThrow(
+        PerplexityAPIException,
+      );
     });
 
     it('should handle API errors', async () => {
-      const apiError = new Perplexity.APIError(
-        500,
-        {} as any,
-        'Internal server error',
-        {},
-      );
+      // Create a mock APIError that matches the expected structure
+      const apiError = Object.create(Perplexity.APIError.prototype) as Error & {
+        status: number;
+        name: string;
+      };
+      Object.assign(apiError, {
+        status: 500,
+        message: 'Internal server error',
+        name: 'APIError',
+      });
       mockPerplexityClient.search.create.mockRejectedValue(apiError);
 
-      await expect(
-        client.searchCasinos(StateAbbreviation.NJ),
-      ).rejects.toThrow(PerplexityAPIException);
+      await expect(client.searchCasinos(StateAbbreviation.NJ)).rejects.toThrow(
+        PerplexityAPIException,
+      );
     });
 
     it('should handle generic errors', async () => {
       const genericError = new Error('Network error');
       mockPerplexityClient.search.create.mockRejectedValue(genericError);
 
-      await expect(
-        client.searchCasinos(StateAbbreviation.NJ),
-      ).rejects.toThrow(PerplexityAPIException);
+      await expect(client.searchCasinos(StateAbbreviation.NJ)).rejects.toThrow(
+        PerplexityAPIException,
+      );
     });
   });
 
@@ -422,7 +462,7 @@ describe('PerplexitySearchClient', () => {
         };
 
         mockPerplexityClient.search.create.mockResolvedValue(
-          mockSearchResponse as any,
+          mockSearchResponse,
         );
 
         await client.searchCasinos(state);
@@ -451,15 +491,11 @@ describe('PerplexitySearchClient', () => {
         id: 'search-123',
       };
 
-      mockPerplexityClient.search.create.mockResolvedValue(
-        mockSearchResponse as any,
-      );
+      mockPerplexityClient.search.create.mockResolvedValue(mockSearchResponse);
 
       const result = await client.searchCasinos(StateAbbreviation.NJ);
 
-      expect(result.casinos[0].website).toBe(
-        'https://casino.betmgm.com/path',
-      );
+      expect(result.casinos[0].website).toBe('https://casino.betmgm.com/path');
     });
   });
 });

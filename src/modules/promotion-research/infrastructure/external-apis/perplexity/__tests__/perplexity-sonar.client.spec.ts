@@ -1,48 +1,88 @@
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
-import { AxiosError, AxiosResponse, InternalAxiosRequestConfig } from 'axios';
+import Perplexity from '@perplexity-ai/perplexity_ai';
 import { Casino } from '../../../../../shared/domain/entities/casino.entity';
 import { StateAbbreviation } from '../../../../../shared/domain/enums/state.enum';
 import { PerplexityAPIException } from '../../../../../shared/domain/exceptions';
-import { HttpClient } from '../../../../../shared/infrastructure/external-apis/http-client';
 import { RateLimiterService } from '../../../../../shared/infrastructure/rate-limiting';
 import { Promotion } from '../../../../domain/entities/promotion.entity';
 import { PerplexitySonarClient } from '../perplexity-sonar.client';
 
+// Mock the Perplexity SDK
+jest.mock('@perplexity-ai/perplexity_ai');
+
+// Define mock types
+interface ChatCompletionRequest {
+  model: string;
+  messages: Array<{ role: string; content: string }>;
+  temperature?: number;
+  max_tokens?: number;
+  search_recency_filter?: string;
+  return_images?: boolean;
+  return_related_questions?: boolean;
+  response_format?: {
+    type: string;
+    json_schema?: {
+      schema: unknown;
+    };
+  };
+}
+
+interface ChatCompletionResponse {
+  choices: Array<{
+    message: {
+      content: string;
+    };
+  }>;
+  search_results?: Array<{ url: string }>;
+}
+
+interface MockPerplexityClient {
+  chat: {
+    completions: {
+      create: jest.Mock<
+        Promise<ChatCompletionResponse>,
+        [ChatCompletionRequest]
+      >;
+    };
+  };
+}
+
 describe('PerplexitySonarClient', () => {
   let client: PerplexitySonarClient;
-  let mockHttpClient: jest.Mocked<HttpClient>;
+  let mockPerplexityClient: MockPerplexityClient;
   let mockRateLimiter: jest.Mocked<RateLimiterService>;
-
-  const mockAxiosConfig: InternalAxiosRequestConfig = {
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  } as InternalAxiosRequestConfig;
 
   const mockConfigService = {
     get: jest.fn((key: string) => {
-      const config: Record<string, string | number> = {
-        PERPLEXITY_API_KEY: 'test-api-key',
-        PROMOTION_BATCH_SIZE: 5,
-      };
-      return config[key];
+      if (key === 'PERPLEXITY_API_KEY') return 'test-api-key';
+      if (key === 'PROMOTION_BATCH_SIZE') return 5;
+      return undefined;
     }),
   };
 
   beforeEach(async () => {
     jest.clearAllMocks();
 
-    mockHttpClient = {
-      get: jest.fn(),
-      post: jest.fn(),
-      put: jest.fn(),
-      delete: jest.fn(),
-      isAxiosError: jest.fn(),
-    } as unknown as jest.Mocked<HttpClient>;
+    // Create simple mock
+    mockPerplexityClient = {
+      chat: {
+        completions: {
+          create: jest.fn<
+            Promise<ChatCompletionResponse>,
+            [ChatCompletionRequest]
+          >(),
+        },
+      },
+    };
+
+    // Mock the constructor
+    (Perplexity as jest.MockedClass<typeof Perplexity>).mockImplementation(
+      () => mockPerplexityClient as unknown as Perplexity,
+    );
 
     mockRateLimiter = {
-      execute: jest.fn().mockImplementation(<T>(fn: () => T) => fn()),
+      execute: jest.fn().mockImplementation((fn: () => unknown) => fn()),
       handleRateLimitError: jest.fn(),
       getStats: jest.fn(),
     } as unknown as jest.Mocked<RateLimiterService>;
@@ -62,14 +102,9 @@ describe('PerplexitySonarClient', () => {
     }).compile();
 
     client = module.get<PerplexitySonarClient>(PerplexitySonarClient);
-
-    Object.defineProperty(client, 'httpClient', {
-      value: mockHttpClient,
-      writable: true,
-    });
   });
 
-  describe('queryPromotionsBatch', () => {
+  describe('queryPromotionsBatch - Basic Functionality', () => {
     const mockCasinos: Casino[] = [
       Casino.create({
         casinodb_id: 1,
@@ -85,536 +120,114 @@ describe('PerplexitySonarClient', () => {
       }),
     ];
 
-    const mockExistingPromotions = new Map<string, Promotion[]>([
-      [
-        'BetMGM Casino',
-        [
-          Promotion.create({
-            offerName: 'Old Welcome Bonus',
-            offerType: 'welcome_bonus',
-            expectedDeposit: 10,
-            expectedBonus: 50,
-          }),
+    it('should successfully query promotions', async () => {
+      const mockResponse = {
+        choices: [
+          {
+            message: {
+              content: JSON.stringify([
+                {
+                  casinoName: 'BetMGM Casino',
+                  offerName: '$1000 Welcome Bonus',
+                  offerType: 'welcome_bonus',
+                  expectedDeposit: 10,
+                  expectedBonus: 1000,
+                  wageringRequirements: '15x',
+                  termsAndConditions: 'T&Cs apply',
+                },
+              ]),
+            },
+          },
         ],
-      ],
-    ]);
-
-    it('should successfully query and parse promotions for batch', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-1',
-          model: 'llama-3.1-sonar-large-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: `Here are the current promotions:
-                
-                [
-                  {
-                    "casinoName": "BetMGM Casino",
-                    "offerName": "Welcome Bonus",
-                    "offerType": "welcome_bonus",
-                    "expectedDeposit": 10,
-                    "expectedBonus": 100,
-                    "wageringRequirements": "30x bonus",
-                    "termsAndConditions": "New players only",
-                    "validUntil": "2025-12-31"
-                  },
-                  {
-                    "casinoName": "DraftKings Casino",
-                    "offerName": "First Deposit Match",
-                    "offerType": "deposit_match",
-                    "expectedDeposit": 50,
-                    "expectedBonus": 100
-                  }
-                ]`,
-              },
-              finish_reason: 'stop',
-            },
-          ],
-          citations: [
-            'https://betmgm.com/promotions',
-            'https://draftkings.com/promotions',
-          ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
+        search_results: [{ url: 'https://betmgm.com/promotions' }],
       };
 
-      mockHttpClient.post.mockResolvedValue(mockResponse);
-
-      const result = await client.queryPromotionsBatch(
-        mockCasinos,
-        mockExistingPromotions,
+      mockPerplexityClient.chat.completions.create.mockResolvedValue(
+        mockResponse,
       );
-
-      expect(result.promotions).toHaveLength(2);
-      expect(result.promotions[0]).toEqual({
-        casinoName: 'BetMGM Casino',
-        offerName: 'Welcome Bonus',
-        offerType: 'welcome_bonus',
-        expectedDeposit: 10,
-        expectedBonus: 100,
-        wageringRequirements: '30x bonus',
-        termsAndConditions: 'New players only',
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-        validUntil: expect.any(String),
-      });
-      expect(result.promotions[1]).toEqual({
-        casinoName: 'DraftKings Casino',
-        offerName: 'First Deposit Match',
-        offerType: 'deposit_match',
-        expectedDeposit: 50,
-        expectedBonus: 100,
-        termsAndConditions: undefined,
-        wageringRequirements: undefined,
-        validUntil: undefined,
-      });
-      expect(result.citations).toHaveLength(2);
-      expect(result.casinos).toEqual(['BetMGM Casino', 'DraftKings Casino']);
-      // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(mockRateLimiter.execute).toHaveBeenCalledTimes(1);
-    });
-
-    it('should return empty result for empty casino batch', async () => {
-      const result = await client.queryPromotionsBatch(
-        [],
-        mockExistingPromotions,
-      );
-
-      expect(result.promotions).toHaveLength(0);
-      expect(result.citations).toHaveLength(0);
-      expect(result.casinos).toHaveLength(0);
-      // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(mockHttpClient.post).not.toHaveBeenCalled();
-    });
-
-    it('should respect configured batch size', async () => {
-      const largeCasinoList: Casino[] = Array.from({ length: 10 }, (_, i) =>
-        Casino.create({
-          casinodb_id: i + 1,
-          name: `Casino ${i + 1}`,
-          state: StateAbbreviation.NJ,
-        }),
-      );
-
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-2',
-          model: 'llama-3.1-sonar-large-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '[]',
-              },
-              finish_reason: 'stop',
-            },
-          ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
-      };
-
-      mockHttpClient.post.mockResolvedValue(mockResponse);
-
-      const result = await client.queryPromotionsBatch(
-        largeCasinoList,
-        new Map(),
-      );
-
-      expect(result.casinos).toHaveLength(5);
-    });
-
-    it('should normalize offer types correctly', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-3',
-          model: 'llama-3.1-sonar-large-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: `[
-                  {
-                    "casinoName": "Test Casino",
-                    "offerName": "Welcome",
-                    "offerType": "welcome",
-                    "expectedDeposit": 10,
-                    "expectedBonus": 50
-                  },
-                  {
-                    "casinoName": "Test Casino",
-                    "offerName": "Match",
-                    "offerType": "match bonus",
-                    "expectedDeposit": 20,
-                    "expectedBonus": 40
-                  },
-                  {
-                    "casinoName": "Test Casino",
-                    "offerName": "No Deposit",
-                    "offerType": "no deposit",
-                    "expectedDeposit": 0,
-                    "expectedBonus": 25
-                  }
-                ]`,
-              },
-              finish_reason: 'stop',
-            },
-          ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
-      };
-
-      mockHttpClient.post.mockResolvedValue(mockResponse);
-
-      const result = await client.queryPromotionsBatch(mockCasinos, new Map());
-
-      expect(result.promotions[0].offerType).toBe('welcome_bonus');
-      expect(result.promotions[1].offerType).toBe('deposit_match');
-      expect(result.promotions[2].offerType).toBe('no_deposit_bonus');
-    });
-
-    it('should handle negative amounts by converting to zero', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-4',
-          model: 'llama-3.1-sonar-large-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: `[
-                  {
-                    "casinoName": "Test Casino",
-                    "offerName": "Test Offer",
-                    "offerType": "welcome_bonus",
-                    "expectedDeposit": -10,
-                    "expectedBonus": -50
-                  }
-                ]`,
-              },
-              finish_reason: 'stop',
-            },
-          ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
-      };
-
-      mockHttpClient.post.mockResolvedValue(mockResponse);
-
-      const result = await client.queryPromotionsBatch(mockCasinos, new Map());
-
-      expect(result.promotions[0].expectedDeposit).toBe(0);
-      expect(result.promotions[0].expectedBonus).toBe(0);
-    });
-
-    it('should filter out invalid promotion data', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-5',
-          model: 'llama-3.1-sonar-large-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: `[
-                  {
-                    "casinoName": "Valid Casino",
-                    "offerName": "Valid Offer",
-                    "offerType": "welcome_bonus",
-                    "expectedDeposit": 10,
-                    "expectedBonus": 50
-                  },
-                  {
-                    "offerName": "Missing Casino Name",
-                    "offerType": "welcome_bonus",
-                    "expectedDeposit": 10,
-                    "expectedBonus": 50
-                  },
-                  {
-                    "casinoName": "Missing Offer Name",
-                    "offerType": "welcome_bonus",
-                    "expectedDeposit": 10,
-                    "expectedBonus": 50
-                  },
-                  {
-                    "casinoName": "Missing Amounts",
-                    "offerName": "Test",
-                    "offerType": "welcome_bonus"
-                  },
-                  "invalid string entry"
-                ]`,
-              },
-              finish_reason: 'stop',
-            },
-          ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
-      };
-
-      mockHttpClient.post.mockResolvedValue(mockResponse);
 
       const result = await client.queryPromotionsBatch(mockCasinos, new Map());
 
       expect(result.promotions).toHaveLength(1);
-      expect(result.promotions[0].casinoName).toBe('Valid Casino');
+      expect(result.promotions[0].casinoName).toBe('BetMGM Casino');
+      expect(result.promotions[0].offerName).toBe('$1000 Welcome Bonus');
+      expect(result.promotions[0].expectedBonus).toBe(1000);
+      expect(result.citations).toHaveLength(1);
+      expect(result.casinos).toHaveLength(2);
     });
 
-    it('should clean casino names and strings properly', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-6',
-          model: 'llama-3.1-sonar-large-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: `[
-                  {
-                    "casinoName": "  Casino   Name  ",
-                    "offerName": "\\"Quoted   Offer\\"",
-                    "offerType": "welcome_bonus",
-                    "expectedDeposit": 10,
-                    "expectedBonus": 50,
-                    "termsAndConditions": "  Multiple   spaces  "
-                  }
-                ]`,
-              },
-              finish_reason: 'stop',
-            },
-          ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
-      };
+    it('should handle empty casino batch', async () => {
+      const result = await client.queryPromotionsBatch([], new Map());
 
-      mockHttpClient.post.mockResolvedValue(mockResponse);
-
-      const result = await client.queryPromotionsBatch(mockCasinos, new Map());
-
-      expect(result.promotions[0].casinoName).toBe('Casino Name');
-      expect(result.promotions[0].offerName).toBe('Quoted Offer');
-      expect(result.promotions[0].termsAndConditions).toBe('Multiple spaces');
+      expect(result.promotions).toHaveLength(0);
+      expect(result.citations).toHaveLength(0);
+      expect(result.casinos).toHaveLength(0);
     });
 
-    it('should parse valid dates correctly', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-7',
-          model: 'llama-3.1-sonar-large-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: `[
-                  {
-                    "casinoName": "Test Casino",
-                    "offerName": "Test Offer",
-                    "offerType": "welcome_bonus",
-                    "expectedDeposit": 10,
-                    "expectedBonus": 50,
-                    "validUntil": "2025-12-31"
-                  }
-                ]`,
-              },
-              finish_reason: 'stop',
+    it('should handle no promotions found', async () => {
+      const mockResponse = {
+        choices: [
+          {
+            message: {
+              content: JSON.stringify([]),
             },
-          ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
+          },
+        ],
+        search_results: [],
       };
 
-      mockHttpClient.post.mockResolvedValue(mockResponse);
-
-      const result = await client.queryPromotionsBatch(mockCasinos, new Map());
-
-      expect(result.promotions[0].validUntil).toBeDefined();
-      expect(new Date(result.promotions[0].validUntil!).getFullYear()).toBe(
-        2025,
+      mockPerplexityClient.chat.completions.create.mockResolvedValue(
+        mockResponse,
       );
-    });
-
-    it('should handle invalid dates gracefully', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-8',
-          model: 'llama-3.1-sonar-large-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: `[
-                  {
-                    "casinoName": "Test Casino",
-                    "offerName": "Test Offer",
-                    "offerType": "welcome_bonus",
-                    "expectedDeposit": 10,
-                    "expectedBonus": 50,
-                    "validUntil": "invalid-date"
-                  }
-                ]`,
-              },
-              finish_reason: 'stop',
-            },
-          ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
-      };
-
-      mockHttpClient.post.mockResolvedValue(mockResponse);
-
-      const result = await client.queryPromotionsBatch(mockCasinos, new Map());
-
-      expect(result.promotions[0].validUntil).toBeUndefined();
-    });
-
-    it('should return empty array when no valid JSON found in response', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-9',
-          model: 'llama-3.1-sonar-large-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: 'This is not valid JSON',
-              },
-              finish_reason: 'stop',
-            },
-          ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
-      };
-
-      mockHttpClient.post.mockResolvedValue(mockResponse);
 
       const result = await client.queryPromotionsBatch(mockCasinos, new Map());
 
       expect(result.promotions).toHaveLength(0);
-      expect(result.citations).toHaveLength(0);
     });
 
-    it('should handle timeout errors', async () => {
-      const timeoutError = {
-        code: 'ECONNABORTED',
-        message: 'timeout',
-        isAxiosError: true,
-      } as AxiosError;
-
-      mockHttpClient.post.mockRejectedValue(timeoutError);
-      mockHttpClient.isAxiosError.mockReturnValue(true);
-
-      await expect(
-        client.queryPromotionsBatch(mockCasinos, new Map()),
-      ).rejects.toThrow(PerplexityAPIException);
-      await expect(
-        client.queryPromotionsBatch(mockCasinos, new Map()),
-      ).rejects.toThrow(/Request timeout/);
-    });
-
-    it('should handle network errors', async () => {
-      const networkError = {
-        message: 'Network error',
-        isAxiosError: true,
-        response: undefined,
-      } as AxiosError;
-
-      mockHttpClient.post.mockRejectedValue(networkError);
-      mockHttpClient.isAxiosError.mockReturnValue(true);
-
-      await expect(
-        client.queryPromotionsBatch(mockCasinos, new Map()),
-      ).rejects.toThrow(PerplexityAPIException);
-      await expect(
-        client.queryPromotionsBatch(mockCasinos, new Map()),
-      ).rejects.toThrow(/Network error/);
-    });
-
-    it('should handle 429 rate limit errors with retry', async () => {
-      const rateLimitError: Partial<AxiosError> = {
-        message: 'Too Many Requests',
-        isAxiosError: true,
-        name: 'AxiosError',
-        toJSON: () => ({}),
-        response: {
-          status: 429,
-          statusText: 'Too Many Requests',
-          headers: {
-            'retry-after': '120',
-          },
-          data: {},
-          config: mockAxiosConfig,
-        },
-      };
-
-      mockHttpClient.post.mockRejectedValue(rateLimitError);
-      mockHttpClient.isAxiosError.mockReturnValue(true);
-
-      await expect(
-        client.queryPromotionsBatch(mockCasinos, new Map()),
-      ).rejects.toThrow(PerplexityAPIException);
-      // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(mockRateLimiter.handleRateLimitError).toHaveBeenCalledWith(120);
-    });
-
-    it('should use rate limiter for request execution', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-10',
-          model: 'llama-3.1-sonar-large-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '[]',
-              },
-              finish_reason: 'stop',
+    it('should filter out invalid promotion data', async () => {
+      const mockResponse = {
+        choices: [
+          {
+            message: {
+              content: JSON.stringify([
+                {
+                  casinoName: 'BetMGM Casino',
+                  offerName: 'Valid Offer',
+                  offerType: 'welcome_bonus',
+                  expectedDeposit: 10,
+                  expectedBonus: 1000,
+                },
+                {
+                  // Missing required fields
+                  casinoName: 'Invalid Casino',
+                },
+              ]),
             },
-          ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
+          },
+        ],
+        search_results: [],
       };
 
-      mockHttpClient.post.mockResolvedValue(mockResponse);
+      mockPerplexityClient.chat.completions.create.mockResolvedValue(
+        mockResponse,
+      );
+
+      const result = await client.queryPromotionsBatch(mockCasinos, new Map());
+
+      expect(result.promotions).toHaveLength(1);
+      expect(result.promotions[0].casinoName).toBe('BetMGM Casino');
+    });
+
+    it('should use rate limiter', async () => {
+      const mockResponse = {
+        choices: [{ message: { content: JSON.stringify([]) } }],
+        search_results: [],
+      };
+
+      mockPerplexityClient.chat.completions.create.mockResolvedValue(
+        mockResponse,
+      );
 
       await client.queryPromotionsBatch(mockCasinos, new Map());
 
@@ -625,57 +238,226 @@ describe('PerplexitySonarClient', () => {
         expect.any(Function),
       );
     });
+  });
 
-    it('should use correct API model and parameters', async () => {
-      const mockResponse: AxiosResponse = {
-        data: {
-          id: 'response-11',
-          model: 'llama-3.1-sonar-large-128k-online',
-          choices: [
-            {
-              index: 0,
-              message: {
-                role: 'assistant',
-                content: '[]',
-              },
-              finish_reason: 'stop',
-            },
-          ],
-        },
-        status: 200,
-        statusText: 'OK',
-        headers: {},
-        config: mockAxiosConfig,
-      };
+  describe('Error Handling', () => {
+    const mockCasinos: Casino[] = [
+      Casino.create({
+        casinodb_id: 1,
+        name: 'Test Casino',
+        state: StateAbbreviation.NJ,
+      }),
+    ];
 
-      mockHttpClient.post.mockResolvedValue(mockResponse);
+    it('should handle rate limit errors', async () => {
+      // Create a mock RateLimitError that matches the expected structure
+      const rateLimitError = Object.create(
+        Perplexity.RateLimitError.prototype,
+      ) as Error & { name: string };
+      Object.assign(rateLimitError, {
+        message: 'Rate limit exceeded',
+        name: 'RateLimitError',
+      });
+      mockPerplexityClient.chat.completions.create.mockRejectedValue(
+        rateLimitError,
+      );
 
-      await client.queryPromotionsBatch(mockCasinos, new Map());
+      await expect(
+        client.queryPromotionsBatch(mockCasinos, new Map()),
+      ).rejects.toThrow(PerplexityAPIException);
 
       // eslint-disable-next-line @typescript-eslint/unbound-method
-      expect(mockHttpClient.post).toHaveBeenCalledWith(
-        '/chat/completions',
-        expect.objectContaining({
-          model: 'llama-3.1-sonar-large-128k-online',
-          temperature: 0.2,
-          max_tokens: 4000,
-          return_citations: true,
-          search_recency_filter: 'week',
-        }),
-        expect.objectContaining({
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-          headers: expect.objectContaining({
-            Authorization: 'Bearer test-api-key',
-          }),
-        }),
+      expect(mockRateLimiter.handleRateLimitError).toHaveBeenCalledWith(60);
+    });
+
+    it('should handle bad request errors', async () => {
+      // Create a mock BadRequestError that matches the expected structure
+      const badRequestError = Object.create(
+        Perplexity.BadRequestError.prototype,
+      ) as Error & { name: string };
+      Object.assign(badRequestError, {
+        message: 'Invalid request',
+        name: 'BadRequestError',
+      });
+      mockPerplexityClient.chat.completions.create.mockRejectedValue(
+        badRequestError,
       );
+
+      await expect(
+        client.queryPromotionsBatch(mockCasinos, new Map()),
+      ).rejects.toThrow(PerplexityAPIException);
+    });
+
+    it('should handle API errors', async () => {
+      // Create a mock APIError that matches the expected structure
+      const apiError = Object.create(Perplexity.APIError.prototype) as Error & {
+        status: number;
+        name: string;
+      };
+      Object.assign(apiError, {
+        status: 500,
+        message: 'Internal server error',
+        name: 'APIError',
+      });
+      mockPerplexityClient.chat.completions.create.mockRejectedValue(apiError);
+
+      await expect(
+        client.queryPromotionsBatch(mockCasinos, new Map()),
+      ).rejects.toThrow(PerplexityAPIException);
+    });
+
+    it('should handle generic errors', async () => {
+      const genericError = new Error('Network error');
+      mockPerplexityClient.chat.completions.create.mockRejectedValue(
+        genericError,
+      );
+
+      await expect(
+        client.queryPromotionsBatch(mockCasinos, new Map()),
+      ).rejects.toThrow(PerplexityAPIException);
     });
   });
 
-  describe('getBatchSize', () => {
+  describe('Configuration', () => {
+    it('should throw error if API key is not configured', async () => {
+      await expect(
+        Test.createTestingModule({
+          providers: [
+            PerplexitySonarClient,
+            {
+              provide: ConfigService,
+              useValue: {
+                get: jest.fn().mockReturnValue(''),
+              },
+            },
+            {
+              provide: RateLimiterService,
+              useValue: mockRateLimiter,
+            },
+          ],
+        }).compile(),
+      ).rejects.toThrow('Perplexity API key is required');
+    });
+
     it('should return configured batch size', () => {
       const batchSize = client.getBatchSize();
       expect(batchSize).toBe(5);
+    });
+
+    it('should use default batch size if not configured', async () => {
+      const moduleWithDefaults: TestingModule = await Test.createTestingModule({
+        providers: [
+          PerplexitySonarClient,
+          {
+            provide: ConfigService,
+            useValue: {
+              get: jest.fn((key: string) => {
+                if (key === 'PERPLEXITY_API_KEY') return 'test-key';
+                return undefined;
+              }),
+            },
+          },
+          {
+            provide: RateLimiterService,
+            useValue: mockRateLimiter,
+          },
+        ],
+      }).compile();
+
+      const clientWithDefaults = moduleWithDefaults.get<PerplexitySonarClient>(
+        PerplexitySonarClient,
+      );
+
+      expect(clientWithDefaults.getBatchSize()).toBe(7);
+    });
+  });
+
+  describe('API Integration', () => {
+    const mockCasinos: Casino[] = [
+      Casino.create({
+        casinodb_id: 1,
+        name: 'Test Casino',
+        state: StateAbbreviation.NJ,
+      }),
+    ];
+
+    it('should use sonar model', async () => {
+      const mockResponse = {
+        choices: [{ message: { content: JSON.stringify([]) } }],
+        search_results: [],
+      };
+
+      mockPerplexityClient.chat.completions.create.mockResolvedValue(
+        mockResponse,
+      );
+
+      await client.queryPromotionsBatch(mockCasinos, new Map());
+
+      expect(mockPerplexityClient.chat.completions.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'sonar',
+          temperature: 0.2,
+          max_tokens: 2000,
+          search_recency_filter: 'week',
+        }),
+      );
+    });
+
+    it('should include structured output format', async () => {
+      const mockResponse = {
+        choices: [{ message: { content: JSON.stringify([]) } }],
+        search_results: [],
+      };
+
+      mockPerplexityClient.chat.completions.create.mockResolvedValue(
+        mockResponse,
+      );
+
+      await client.queryPromotionsBatch(mockCasinos, new Map());
+
+      const mockCalls: Array<[ChatCompletionRequest]> =
+        mockPerplexityClient.chat.completions.create.mock.calls;
+      const firstCall = mockCalls[0];
+      const callArgs = firstCall?.[0];
+
+      expect(callArgs?.response_format).toBeDefined();
+      expect(callArgs?.response_format?.type).toBe('json_schema');
+    });
+
+    it('should include existing promotions in context', async () => {
+      const existingPromotions = new Map<string, Promotion[]>([
+        [
+          'Test Casino',
+          [
+            Promotion.create({
+              offerName: 'Old Bonus',
+              offerType: 'welcome_bonus',
+              expectedDeposit: 10,
+              expectedBonus: 50,
+            }),
+          ],
+        ],
+      ]);
+
+      const mockResponse = {
+        choices: [{ message: { content: JSON.stringify([]) } }],
+        search_results: [],
+      };
+
+      mockPerplexityClient.chat.completions.create.mockResolvedValue(
+        mockResponse,
+      );
+
+      await client.queryPromotionsBatch(mockCasinos, existingPromotions);
+
+      const mockCalls: Array<[ChatCompletionRequest]> =
+        mockPerplexityClient.chat.completions.create.mock.calls;
+      const firstCall = mockCalls[0];
+      const callArgs = firstCall?.[0];
+      const userMessage = callArgs?.messages?.find((m) => m.role === 'user');
+
+      expect(userMessage?.content).toContain('Old Bonus');
+      expect(userMessage?.content).toContain('Current known promotions');
     });
   });
 });

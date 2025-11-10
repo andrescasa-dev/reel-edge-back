@@ -1,51 +1,41 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AxiosError } from 'axios';
+import Perplexity from '@perplexity-ai/perplexity_ai';
 import { Casino } from '../../../../shared/domain/entities/casino.entity';
 import { PerplexityAPIException } from '../../../../shared/domain/exceptions';
-import { HttpClient } from '../../../../shared/infrastructure/external-apis/http-client';
 import { RateLimiterService } from '../../../../shared/infrastructure/rate-limiting';
 import { Promotion } from '../../../domain/entities/promotion.entity';
 import {
   BatchResearchResult,
   DiscoveredPromotion,
-  PerplexitySonarResponse,
   RawPromotionData,
 } from './perplexity-sonar.types';
 
 /**
  * Client for Perplexity Sonar API - used for promotion research
- * Uses standard Sonar model for batch promotion queries
+ * Uses Chat Completions SDK with structured JSON outputs
+ * Following guide: https://docs.perplexity.ai/guides/chat-completions-sdk
  */
 @Injectable()
 export class PerplexitySonarClient {
   private readonly logger = new Logger(PerplexitySonarClient.name);
-  private readonly httpClient: HttpClient;
-  private readonly apiKey: string;
+  private readonly client: Perplexity;
   private readonly batchSize: number;
 
   constructor(
     private readonly configService: ConfigService,
     private readonly rateLimiter: RateLimiterService,
   ) {
-    this.apiKey = this.configService.get<string>('PERPLEXITY_API_KEY') || '';
+    const apiKey = this.configService.get<string>('PERPLEXITY_API_KEY') || '';
     this.batchSize =
       this.configService.get<number>('PROMOTION_BATCH_SIZE') || 7;
 
-    if (!this.apiKey) {
+    if (!apiKey) {
       this.logger.error('PERPLEXITY_API_KEY is not configured');
       throw new Error('Perplexity API key is required');
     }
 
-    this.httpClient = new HttpClient(
-      {
-        baseURL: 'https://api.perplexity.ai',
-        timeout: 90000,
-        maxRetries: 3,
-        retryDelay: 2000,
-      },
-      PerplexitySonarClient.name,
-    );
+    this.client = new Perplexity({ apiKey });
 
     this.logger.log(
       `PerplexitySonarClient initialized with batch size: ${this.batchSize}`,
@@ -180,7 +170,9 @@ Focus on accuracy and current information. It's better to return fewer verified 
   }
 
   /**
-   * Make API request to Perplexity Sonar
+   * Make API request to Perplexity Sonar using Chat Completions SDK
+   * Uses structured outputs to enforce JSON response format
+   * Following: https://docs.perplexity.ai/guides/structured-outputs
    */
   private async makeSonarRequest(
     prompt: string,
@@ -188,58 +180,91 @@ Focus on accuracy and current information. It's better to return fewer verified 
     this.logger.debug('Sending batch request to Perplexity Sonar API');
     this.logger.debug(`Prompt length: ${prompt.length} characters`);
 
-    try {
-      const response = await this.httpClient.post<PerplexitySonarResponse>(
-        '/chat/completions',
-        {
-          model: 'llama-3.1-sonar-large-128k-online',
-          messages: [
-            {
-              role: 'system',
-              content:
-                'You are a precise research assistant specializing in casino promotions. Always verify information from official sources. Return data in valid JSON format with accurate dollar amounts.',
-            },
-            {
-              role: 'user',
-              content: prompt,
-            },
-          ],
-          temperature: 0.2,
-          max_tokens: 4000,
-          return_citations: true,
-          search_recency_filter: 'week',
+    // Define JSON schema for promotion response structure
+    const promotionSchema = {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          casinoName: { type: 'string' },
+          offerName: { type: 'string' },
+          offerType: { type: 'string' },
+          expectedDeposit: { type: 'number' },
+          expectedBonus: { type: 'number' },
+          wageringRequirements: { type: 'string' },
+          termsAndConditions: { type: 'string' },
+          validUntil: { type: 'string' },
         },
-        {
-          headers: {
-            Authorization: `Bearer ${this.apiKey}`,
-            'Content-Type': 'application/json',
+        required: [
+          'casinoName',
+          'offerName',
+          'offerType',
+          'expectedDeposit',
+          'expectedBonus',
+        ],
+        additionalProperties: false,
+      },
+    };
+
+    try {
+      const completion = await this.client.chat.completions.create({
+        model: 'sonar',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are a precise research assistant specializing in casino promotions. Always verify information from official sources. Return data as a JSON array matching the provided schema.',
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        temperature: 0.2,
+        max_tokens: 2000,
+        search_recency_filter: 'week',
+        return_images: false,
+        return_related_questions: false,
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            schema: promotionSchema,
           },
         },
-      );
+      });
 
-      const content = response.data.choices[0]?.message?.content || '';
-      const citations = response.data.citations || [];
+      // Extract text content from the response
+      const messageContent = completion.choices[0]?.message?.content;
+      const content =
+        typeof messageContent === 'string'
+          ? messageContent
+          : JSON.stringify(messageContent);
+
+      // Extract citations from search_results if available
+      const citations: string[] = [];
+      if (
+        'search_results' in completion &&
+        Array.isArray(completion.search_results)
+      ) {
+        for (const result of completion.search_results) {
+          if (result && typeof result === 'object' && 'url' in result) {
+            citations.push(String(result.url));
+          }
+        }
+      }
 
       this.logger.debug(`Response received. Content length: ${content.length}`);
       this.logger.debug(`Citations: ${citations.length}`);
-      this.logger.debug(`Raw response: ${content.substring(0, 500)}...`);
+      const preview =
+        content.length > 500 ? content.substring(0, 500) + '...' : content;
+      this.logger.debug(`Raw response: ${preview}`);
 
       return { content, citations };
     } catch (error) {
-      if (this.httpClient.isAxiosError(error)) {
-        const axiosError = error as AxiosError;
-        if (axiosError.response?.status === 429) {
-          const headers = axiosError.response.headers as Record<
-            string,
-            unknown
-          >;
-          const retryAfterHeader = headers['retry-after'];
-          const retryAfter = parseInt(
-            typeof retryAfterHeader === 'string' ? retryAfterHeader : '60',
-          );
-          await this.rateLimiter.handleRateLimitError(retryAfter);
-          throw PerplexityAPIException.rateLimitExceeded(retryAfter);
-        }
+      if (error instanceof Perplexity.RateLimitError) {
+        const retryAfter = 60; // Default retry after 60 seconds
+        await this.rateLimiter.handleRateLimitError(retryAfter);
+        throw PerplexityAPIException.rateLimitExceeded(retryAfter);
       }
       throw error;
     }
@@ -374,29 +399,19 @@ Focus on accuracy and current information. It's better to return fewer verified 
       return error;
     }
 
-    if (this.httpClient.isAxiosError(error)) {
-      const axiosError = error as AxiosError;
+    if (error instanceof Perplexity.BadRequestError) {
+      return PerplexityAPIException.invalidResponse(
+        'Invalid request: ' + error.message,
+      );
+    }
 
-      if (axiosError.code === 'ECONNABORTED') {
-        return PerplexityAPIException.timeout();
-      }
+    if (error instanceof Perplexity.RateLimitError) {
+      return PerplexityAPIException.rateLimitExceeded(60);
+    }
 
-      if (!axiosError.response) {
-        return PerplexityAPIException.networkError(axiosError);
-      }
-
-      const status = axiosError.response.status;
-      const message = axiosError.message || 'Unknown error';
-
-      if (status === 401 || status === 403) {
-        return PerplexityAPIException.invalidApiKey();
-      }
-
-      if (status === 429) {
-        return PerplexityAPIException.rateLimitExceeded();
-      }
-
-      return PerplexityAPIException.apiError(status, message);
+    if (error instanceof Perplexity.APIError) {
+      const status = typeof error.status === 'number' ? error.status : 500;
+      return PerplexityAPIException.apiError(status, error.message);
     }
 
     if (error instanceof Error) {
