@@ -1,7 +1,30 @@
 import { PromotionComparison } from '../entities/promotion-comparison.entity';
+import { Promotion } from '../entities/promotion.entity';
 import { ComparisonType } from '../../../shared/domain/enums/comparison-type.enum';
 import { ComparisonStatus } from '../../../shared/domain/enums/comparison-status.enum';
 import { StateAbbreviation } from '../../../shared/domain/enums/state.enum';
+
+/**
+ * Data structure for creating a new promotion comparison
+ */
+export interface CreatePromotionComparisonData {
+  casinoId: string;
+  currentPromotion: Promotion | null;
+  discoveredPromotion: Promotion;
+  comparisonType: ComparisonType;
+  status: ComparisonStatus;
+  sources: string[];
+  notes?: string;
+}
+
+/**
+ * Data structure for updating a promotion comparison
+ */
+export interface UpdatePromotionComparisonData {
+  status?: ComparisonStatus;
+  notes?: string;
+  comparisonType?: ComparisonType;
+}
 
 /**
  * Promotion Comparison Repository Interface
@@ -33,12 +56,12 @@ export interface IPromotionComparisonRepository {
   ): Promise<PromotionComparison[]>;
 
   create(
-    comparison: Omit<PromotionComparison, 'id' | 'createdAt' | 'updatedAt'>,
+    comparison: CreatePromotionComparisonData,
   ): Promise<PromotionComparison>;
 
   update(
     id: string,
-    data: Partial<PromotionComparison>,
+    data: UpdatePromotionComparisonData,
   ): Promise<PromotionComparison>;
 
   updateStatus(

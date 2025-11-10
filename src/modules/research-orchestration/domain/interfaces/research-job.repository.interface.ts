@@ -2,6 +2,28 @@ import {
   ResearchJob,
   ResearchJobStatus,
 } from '../entities/research-job.entity';
+import { StateAbbreviation } from '../../../shared/domain/enums/state.enum';
+
+/**
+ * Data structure for creating a new research job
+ */
+export interface CreateResearchJobData {
+  states: StateAbbreviation[];
+  status: ResearchJobStatus;
+  completedAt?: Date;
+  results?: object;
+  errors?: object;
+}
+
+/**
+ * Data structure for updating a research job
+ */
+export interface UpdateResearchJobData {
+  status?: ResearchJobStatus;
+  completedAt?: Date;
+  results?: object;
+  errors?: object;
+}
 
 /**
  * Research Job Repository Interface
@@ -22,9 +44,9 @@ export interface IResearchJobRepository {
 
   findRunning(): Promise<ResearchJob | null>;
 
-  create(job: Omit<ResearchJob, 'id' | 'startedAt'>): Promise<ResearchJob>;
+  create(job: CreateResearchJobData): Promise<ResearchJob>;
 
-  update(id: string, data: Partial<ResearchJob>): Promise<ResearchJob>;
+  update(id: string, data: UpdateResearchJobData): Promise<ResearchJob>;
 
   complete(id: string, results: object): Promise<ResearchJob>;
 

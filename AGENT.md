@@ -6,6 +6,7 @@ Generate code, corrections, and refactorings that comply with the basic principl
 
 ### Basic Principles
 
+- Avoid using any!
 - Use English for all code and documentation.
 - Always declare the type of each variable and function (parameters and return value).
   - Avoid using any.

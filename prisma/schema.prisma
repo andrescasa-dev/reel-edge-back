@@ -1,9 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,4 +8,108 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// Casino model - represents casinos from Reel Edge DB
+model Casino {
+  id           String   @id @default(cuid())
+  casinodb_id  Int      @unique
+  name         String
+  state        String
+  website      String?
+  regulatoryId String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  comparisons PromotionComparison[]
+
+  @@index([state])
+  @@index([name])
+  @@map("casinos")
+}
+
+// MissingCasino model - casinos discovered but not in Reel Edge DB
+model MissingCasino {
+  id              String   @id @default(cuid())
+  name            String
+  state           String
+  source          String
+  website         String?
+  regulatoryId    String?
+  promotionsFound Int      @default(0)
+  discoveredAt    DateTime @default(now())
+
+  @@index([state])
+  @@index([name])
+  @@map("missing_casinos")
+}
+
+// PromotionComparison model - tracks discovered promotions vs existing
+model PromotionComparison {
+  id       String @id @default(cuid())
+  casinoId String
+
+  // Current promotion (nullable for "new" comparisons)
+  currentOfferName            String?
+  currentOfferType            String?
+  currentExpectedDeposit      Float?
+  currentExpectedBonus        Float?
+  currentTermsAndConditions   String?
+  currentWageringRequirements String?
+
+  // Discovered promotion
+  discoveredOfferName            String
+  discoveredOfferType            String
+  discoveredExpectedDeposit      Float
+  discoveredExpectedBonus        Float
+  discoveredTermsAndConditions   String?
+  discoveredWageringRequirements String?
+  discoveredValidFrom            DateTime?
+  discoveredValidUntil           DateTime?
+
+  // Comparison metadata
+  comparisonType String // better, alternative, new
+  status         String  @default("pending") // pending, updated, reviewed, ignored
+  sources        Json // Array of citation URLs from Perplexity
+  notes          String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  casino Casino @relation(fields: [casinoId], references: [id], onDelete: Cascade)
+
+  @@index([status, comparisonType])
+  @@index([casinoId])
+  @@index([discoveredOfferType])
+  @@map("promotion_comparisons")
+}
+
+// ResearchJob model - tracks research execution history
+model ResearchJob {
+  id          String    @id @default(cuid())
+  states      Json // Array of states researched
+  status      String // running, completed, failed
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  results     Json? // Summary results
+  errors      Json? // Error details if failed
+
+  @@index([startedAt])
+  @@index([status])
+  @@map("research_jobs")
+}
+
+// ScheduledJob model - PostgreSQL-based job scheduler
+model ScheduledJob {
+  id        String    @id @default(cuid())
+  jobName   String    @unique
+  schedule  String // Cron expression
+  lastRun   DateTime?
+  nextRun   DateTime
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([isActive, nextRun])
+  @@map("scheduled_jobs")
 }

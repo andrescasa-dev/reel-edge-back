@@ -17,11 +17,11 @@ export class DatabaseCleanupHelper {
    */
   async cleanDatabase(): Promise<void> {
     const tables = [
-      'PromotionComparison',
-      'MissingCasino',
-      'Casino',
-      'ResearchJob',
-      'ScheduledJob',
+      'promotion_comparisons',
+      'missing_casinos',
+      'casinos',
+      'research_jobs',
+      'scheduled_jobs',
     ];
 
     for (const table of tables) {
@@ -54,10 +54,36 @@ export class DatabaseCleanupHelper {
 
 /**
  * Helper function to clean database
+ * Reuses existing Prisma instance when provided, otherwise creates a new one
  * Use in beforeEach hooks
+ *
+ * @param prisma - Optional PrismaClient instance to reuse
  */
-export async function cleanDatabase(): Promise<void> {
-  const helper = new DatabaseCleanupHelper();
-  await helper.cleanDatabase();
-  await helper.disconnect();
+export async function cleanDatabase(prisma?: PrismaClient): Promise<void> {
+  const client = prisma || new PrismaClient();
+
+  const tables = [
+    'promotion_comparisons',
+    'missing_casinos',
+    'casinos',
+    'research_jobs',
+    'scheduled_jobs',
+  ];
+
+  for (const table of tables) {
+    try {
+      await client.$executeRawUnsafe(
+        `TRUNCATE TABLE "${table}" RESTART IDENTITY CASCADE;`,
+      );
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    } catch (_error) {
+      // Table might not exist yet, ignore error
+      console.warn(`Warning: Could not truncate table ${table}.`);
+    }
+  }
+
+  // Only disconnect if we created a new client
+  if (!prisma) {
+    await client.$disconnect();
+  }
 }
