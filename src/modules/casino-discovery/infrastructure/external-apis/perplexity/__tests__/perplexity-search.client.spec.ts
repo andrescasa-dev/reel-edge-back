@@ -114,6 +114,11 @@ describe('PerplexitySearchClient', () => {
         max_results: 20,
         max_tokens_per_page: 2048,
       });
+      
+      // Verify the query includes operator brands (Perplexity best practice)
+      const callArgs = mockPerplexityClient.search.create.mock.calls[0][0];
+      expect(callArgs.query).toContain('operator brands');
+      expect(callArgs.query).toContain('BetMGM');
 
       expect(mockRateLimiter.execute).toHaveBeenCalledTimes(1);
     });
@@ -187,6 +192,71 @@ describe('PerplexitySearchClient', () => {
       expect(result.searchResults).toHaveLength(3); // But search results preserved
     });
 
+    it('should filter out government sites, directories, and hubs', async () => {
+      const mockSearchResponse = {
+        results: [
+          {
+            title: 'NJ Division of Gaming Enforcement',
+            url: 'https://www.njoag.gov/about/divisions-and-offices/division-of-gaming-enforcement-home/internet-gaming-sites/',
+            snippet: 'Official NJ gaming commission',
+            date: '2024-01-01',
+            last_updated: '2024-01-05',
+          },
+          {
+            title: 'NJ Casinos Directory',
+            url: 'https://www.nj.gov/casinos/',
+            snippet: 'List of NJ casinos',
+            date: '2024-01-01',
+            last_updated: '2024-01-05',
+          },
+          {
+            title: 'Top NJ Online Casinos',
+            url: 'https://igamingnj.com/casinos/',
+            snippet: 'iGaming hub',
+            date: '2024-01-01',
+            last_updated: '2024-01-05',
+          },
+          {
+            title: 'Best NJ Casinos',
+            url: 'https://www.bettingusa.com/states/nj/casino/',
+            snippet: 'Betting USA directory',
+            date: '2024-01-01',
+            last_updated: '2024-01-05',
+          },
+          {
+            title: 'NJ Online Casinos',
+            url: 'https://nj.bet',
+            snippet: 'Short domain',
+            date: '2024-01-01',
+            last_updated: '2024-01-05',
+          },
+          {
+            title: 'Casino.org NJ Guide',
+            url: 'https://www.casino.org/new-jersey/',
+            snippet: 'Casino org guide',
+            date: '2024-01-01',
+            last_updated: '2024-01-05',
+          },
+        ],
+        id: 'search-123',
+      };
+
+      mockPerplexityClient.search.create.mockResolvedValue(
+        mockSearchResponse as any,
+      );
+
+      const result = await client.searchCasinos(StateAbbreviation.NJ);
+
+      // All should be filtered out:
+      // - .gov domains
+      // - igaming/hub sites
+      // - bettingusa directory
+      // - short domains (nj.bet)
+      // - .org domains
+      expect(result.casinos).toHaveLength(0);
+      expect(result.searchResults).toHaveLength(6); // But search results preserved
+    });
+
     it('should handle empty search results', async () => {
       const mockSearchResponse = {
         results: [],
@@ -224,6 +294,49 @@ describe('PerplexitySearchClient', () => {
       const result = await client.searchCasinos(StateAbbreviation.NJ);
 
       expect(result.casinos).toHaveLength(0);
+    });
+
+    it('should accept valid casino operator domains', async () => {
+      const mockSearchResponse = {
+        results: [
+          {
+            title: 'Hard Rock Bet Casino',
+            url: 'https://www.hardrock.bet/casino/new-jersey/',
+            snippet: 'Hard Rock online casino',
+            date: '2024-01-01',
+            last_updated: '2024-01-05',
+          },
+          {
+            title: 'BetMGM Casino NJ',
+            url: 'https://casino.betmgm.com/en/games',
+            snippet: 'BetMGM Casino',
+            date: '2024-01-01',
+            last_updated: '2024-01-05',
+          },
+          {
+            title: 'Golden Nugget Online Casino',
+            url: 'https://www.goldennuggetcasino.com',
+            snippet: 'Golden Nugget',
+            date: '2024-01-01',
+            last_updated: '2024-01-05',
+          },
+        ],
+        id: 'search-123',
+      };
+
+      mockPerplexityClient.search.create.mockResolvedValue(
+        mockSearchResponse as any,
+      );
+
+      const result = await client.searchCasinos(StateAbbreviation.NJ);
+
+      // All three should pass: they have casino/bet terms in domain, 
+      // domain is at least 4 chars, not .gov/.org, not review sites
+      expect(result.casinos).toHaveLength(3);
+      expect(result.casinos[0].name).toBe('Hard Rock Bet');
+      expect(result.casinos[0].website).toBe('https://www.hardrock.bet/casino/new-jersey/');
+      expect(result.casinos[1].name).toBe('BetMGM');
+      expect(result.casinos[2].name).toBe('Golden Nugget Online');
     });
   });
 

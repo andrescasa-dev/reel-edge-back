@@ -68,7 +68,8 @@ export class PerplexitySearchClient {
 
   /**
    * Build search query for casino discovery
-   * Creates targeted search queries for the Search API
+   * Creates targeted search queries following Perplexity best practices
+   * Following guide: https://docs.perplexity.ai/guides/prompt-guide
    */
   private buildSearchQuery(state: StateAbbreviation): string {
     const stateNames: Record<StateAbbreviation, string> = {
@@ -80,8 +81,9 @@ export class PerplexitySearchClient {
 
     const stateName = stateNames[state];
 
-    // Search query optimized for finding official casino information
-    return `licensed online casinos ${stateName} ${state} gambling commission official website`;
+    // Specific query targeting casino operator brands, not directories or government sites
+    // Following Perplexity guidelines: "Be Specific and Contextual" and "Think Like a Web Search User"
+    return `online casino operator brands licensed in ${stateName} where players can register and play`;
   }
 
   /**
@@ -200,35 +202,81 @@ export class PerplexitySearchClient {
   }
 
   /**
-   * Check if URL appears to be an official casino website
+   * Check if URL appears to be an official casino operator website
+   * Strict filtering to exclude government sites, directories, and hubs
    */
   private isOfficialCasinoUrl(url: string): boolean {
     const urlLower = url.toLowerCase();
 
-    // Exclude review sites, affiliates, and directories
-    const excludePatterns = [
-      'review',
-      'affiliate',
-      'bonus',
-      'guide',
-      'compare',
-      'reddit',
-      'forum',
-      'wikipedia',
-      'gambling.com',
-      'casino.org',
-    ];
+    try {
+      const urlObj = new URL(urlLower);
+      const domain = urlObj.hostname;
+      const path = urlObj.pathname;
 
-    for (const pattern of excludePatterns) {
-      if (urlLower.includes(pattern)) {
+      // Exclude government and educational domains
+      if (
+        domain.endsWith('.gov') ||
+        domain.endsWith('.edu') ||
+        domain.endsWith('.org')
+      ) {
         return false;
       }
+
+      // Exclude review sites, affiliates, directories, and hubs
+      const excludePatterns = [
+        'review',
+        'reviews',
+        'affiliate',
+        'bonus',
+        'guide',
+        'guides',
+        'compare',
+        'comparison',
+        'reddit',
+        'forum',
+        'wikipedia',
+        'gambling.com',
+        'casino.org',
+        'bettingusa',
+        'elitesportsny',
+        'igaming',
+        'njoag',
+        'njcasino.com',
+        'nj.gov',
+        'best',
+        'top',
+        'list',
+      ];
+
+      for (const pattern of excludePatterns) {
+        if (domain.includes(pattern) || path.includes(pattern)) {
+          return false;
+        }
+      }
+
+      // Must include casino-related terms in the domain (not just the path)
+      const casinoTerms = ['casino', 'bet', 'gaming', 'sportsbook'];
+      const hasCasinoTerm = casinoTerms.some((term) => domain.includes(term));
+
+      if (!hasCasinoTerm) {
+        return false;
+      }
+
+      // Additional check: domain should be a reasonable length for a brand
+      // Exclude very generic domains like "nj.bet"
+      const domainParts = domain.split('.');
+      const mainDomain = domainParts[domainParts.length - 2] || '';
+
+      // Domain should have at least 4 characters before the TLD
+      if (mainDomain.length < 4) {
+        return false;
+      }
+
+      return true;
+    } catch {
+      // Invalid URL
+      return false;
     }
-
-    // Must include casino-related terms in domain
-    const includePatterns = ['casino', 'bet', 'gaming', 'sportsbook'];
-
-    return includePatterns.some((pattern) => urlLower.includes(pattern));
   }
 
   /**
