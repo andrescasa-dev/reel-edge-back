@@ -27,7 +27,7 @@ export const configuration = () => ({
 
   research: {
     scheduleCron: process.env.RESEARCH_SCHEDULE_CRON || '0 0 * * *',
-    promotionBatchSize: parseInt(process.env.PROMOTION_BATCH_SIZE || '7', 10),
+    promotionBatchSize: parseInt(process.env.PROMOTION_BATCH_SIZE || '5', 10),
   },
 
   nextAuth: {
