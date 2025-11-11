@@ -1,4 +1,5 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { CasinoDiscoveryService } from '../../application/services/casino-discovery.service';
 import { MissingCasinoQueryDto } from '../dtos/missing-casino-query.dto';
 import {
@@ -11,6 +12,7 @@ import {
  * Missing Casinos Controller
  * Handles operations related to casinos found in regulatory sources but missing from database
  */
+@ApiTags('Missing Casinos')
 @Controller('missing-casinos')
 export class MissingCasinosController {
   constructor(
@@ -18,6 +20,50 @@ export class MissingCasinosController {
   ) {}
 
   @Get()
+  @ApiOperation({
+    summary: 'List missing casinos',
+    description:
+      'Returns a list of casinos found in regulatory sources but not present in the database',
+  })
+  @ApiQuery({
+    name: 'state',
+    required: false,
+    enum: ['NJ', 'MI', 'PA', 'WV'],
+    description: 'Filter by state abbreviation',
+  })
+  @ApiQuery({
+    name: 'search',
+    required: false,
+    type: String,
+    description: 'Search casinos by name',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Maximum number of results to return',
+    example: 50,
+  })
+  @ApiQuery({
+    name: 'offset',
+    required: false,
+    type: Number,
+    description: 'Number of results to skip',
+    example: 0,
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Successful response',
+    type: MissingCasinosListResponseDto,
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Bad request - Invalid parameters',
+  })
+  @ApiResponse({
+    status: 500,
+    description: 'Internal server error',
+  })
   async getMissingCasinos(
     @Query() query: MissingCasinoQueryDto,
   ): Promise<MissingCasinosListResponseDto> {

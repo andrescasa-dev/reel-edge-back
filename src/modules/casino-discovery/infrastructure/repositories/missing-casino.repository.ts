@@ -56,8 +56,8 @@ export class MissingCasinoRepository implements IMissingCasinoRepository {
       const missingCasinos = await this.prisma.missingCasino.findMany({
         where,
         orderBy: { discoveredAt: 'desc' },
-        take: filters?.limit,
-        skip: filters?.offset,
+        take: filters?.limit !== undefined ? Number(filters.limit) : undefined,
+        skip: filters?.offset !== undefined ? Number(filters.offset) : undefined,
       });
 
       return missingCasinos.map((casino) => this.toDomain(casino));

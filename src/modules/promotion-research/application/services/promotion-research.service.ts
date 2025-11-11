@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Casino } from '../../../shared/domain/entities/casino.entity';
 import { ComparisonStatus } from '../../../shared/domain/enums/comparison-status.enum';
 import { ComparisonType } from '../../../shared/domain/enums/comparison-type.enum';
@@ -225,7 +225,7 @@ export class PromotionResearchService {
         newStatus = ComparisonStatus.IGNORED;
         break;
       default:
-        throw new Error(`Invalid action: ${action as string}`);
+        throw new BadRequestException(`Invalid action: ${action as string}`);
     }
 
     const updated = await this.promotionComparisonRepository.updateStatus(

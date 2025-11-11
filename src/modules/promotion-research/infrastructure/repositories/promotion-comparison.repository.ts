@@ -85,8 +85,8 @@ export class PromotionComparisonRepository
         where,
         include: { casino: true },
         orderBy: { createdAt: 'desc' },
-        take: filters?.limit,
-        skip: filters?.offset,
+        take: filters?.limit !== undefined ? Number(filters.limit) : undefined,
+        skip: filters?.offset !== undefined ? Number(filters.offset) : undefined,
       });
 
       return comparisons.map((comparison) => this.toDomain(comparison));
