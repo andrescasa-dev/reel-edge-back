@@ -2,6 +2,90 @@
 
 A NestJS backend application for managing casino research data, discovering missing casinos, and comparing promotions across NJ, MI, PA, and WV jurisdictions.
 
+## Quick Start
+
+### Prerequisites
+
+- Node.js 18.x or higher
+- PostgreSQL 14.x or higher
+- npm or pnpm
+
+### Installation
+
+1. **Clone the repository**:
+
+   ```bash
+   git clone <repository-url>
+   cd casino-research-back
+   ```
+
+2. **Install dependencies**:
+
+   ```bash
+   npm install
+   ```
+
+3. **Set up environment variables**:
+
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
+
+   Required environment variables:
+
+   ```bash
+   # Application
+   NODE_ENV=development
+   PORT=3000
+
+   # Database (Docker Compose)
+   POSTGRES_USER=postgres
+   POSTGRES_PASSWORD=postgres
+   POSTGRES_DB=casino_research
+
+   # Database URLs
+   DATABASE_URL=postgresql://postgres:postgres@localhost:5432/casino_research
+   DATABASE_URL_TEST=postgresql://postgres:postgres@localhost:5432/casino_research_test
+
+   # External APIs
+   PERPLEXITY_API_KEY=pplx-xxxxx
+   REEL_EDGE_API_URL=https://xhks-nxia-vlqr.n7c.xano.io/api:1ZwRS-f0
+
+   # Research Settings (pueden dejarse así tal cual, ya que son configuraciones recomendadas)
+   RESEARCH_SCHEDULE_CRON=0 0 * * *
+   PERPLEXITY_RATE_LIMIT_RPM=20
+   PROMOTION_BATCH_SIZE=5
+
+   # CORS
+   CORS_ORIGIN=http://localhost:3001
+   ```
+
+   See `.env.example` for a complete template.
+
+4. **Set up databases**:
+
+   ```bash
+   # Start PostgreSQL using Docker Compose
+   docker-compose up -d
+   ```
+
+5. **Run migrations**:
+
+   ```bash
+   # Development database
+   npx prisma migrate dev
+   ```
+
+6. **Start the development server**:
+   ```bash
+   npm run start:dev
+   ```
+
+The API will be available at `http://localhost:3000` and Swagger documentation at `http://localhost:3000/api/docs`.
+
+For detailed setup instructions, see [Local Setup Guide](./docs/local-setup.md).
+
 ## Overview
 
 The Casino Research Assistant backend provides APIs for:
@@ -30,60 +114,6 @@ The backend follows **Clean Architecture** principles with clear separation of c
 - **Validation**: class-validator, class-transformer
 - **Testing**: Jest (unit), Supertest (e2e)
 - **Documentation**: Swagger/OpenAPI
-
-## Quick Start
-
-### Prerequisites
-
-- Node.js 18.x or higher
-- PostgreSQL 14.x or higher
-- npm or pnpm
-
-### Installation
-
-1. **Clone the repository**:
-   ```bash
-   git clone <repository-url>
-   cd casino-research-back
-   ```
-
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-
-3. **Set up environment variables**:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your configuration
-   ```
-
-4. **Set up databases**:
-   ```bash
-   # Create development database
-   createdb casino_research
-   
-   # Create test database
-   createdb casino_research_test
-   ```
-
-5. **Run migrations**:
-   ```bash
-   # Development database
-   npx prisma migrate dev
-   
-   # Test database
-   DATABASE_URL=$DATABASE_URL_TEST npx prisma migrate deploy
-   ```
-
-6. **Start the development server**:
-   ```bash
-   npm run start:dev
-   ```
-
-The API will be available at `http://localhost:3000` and Swagger documentation at `http://localhost:3000/api/docs`.
-
-For detailed setup instructions, see [Local Setup Guide](./docs/local-setup.md).
 
 ## Project Structure
 
@@ -157,6 +187,11 @@ npm run test:e2e
 npm run test:cov
 ```
 
+**Test Statistics:**
+
+- Test Suites: 12 passed, 12 total
+- Tests: 163 passed, 163 total
+
 ### Testing Guidelines
 
 The project follows strict testing principles:
@@ -221,72 +256,6 @@ The project follows TypeScript and NestJS best practices:
 
 See [AGENT.md](./AGENT.md) for detailed coding guidelines.
 
-## Environment Variables
-
-Required environment variables:
-
-```bash
-# Application
-NODE_ENV=development
-PORT=3000
-
-# Database
-DATABASE_URL=postgresql://user:password@localhost:5432/casino_research
-DATABASE_URL_TEST=postgresql://user:password@localhost:5432/casino_research_test
-
-# External APIs
-PERPLEXITY_API_KEY=pplx-xxxxx
-REEL_EDGE_API_URL=https://xhks-nxia-vlqr.n7c.xano.io/api:1ZwRS-f0
-
-# Research Settings
-RESEARCH_SCHEDULE_CRON=0 0 * * *
-PERPLEXITY_RATE_LIMIT_RPM=20
-PROMOTION_BATCH_SIZE=7
-
-# NextAuth
-NEXTAUTH_SECRET=your-secret-here
-NEXTAUTH_URL=http://localhost:3001
-
-# CORS
-CORS_ORIGIN=http://localhost:3001
-```
-
-See `.env.example` for a complete template.
-
-## Deployment
-
-### Prerequisites
-
-- PostgreSQL database (Neon, Supabase, Railway, etc.)
-- Environment variables configured
-- Node.js runtime
-
-### Deployment Steps
-
-1. **Set up production database**
-2. **Configure environment variables**
-3. **Run database migrations**:
-   ```bash
-   npx prisma migrate deploy
-   ```
-4. **Build the application**:
-   ```bash
-   npm run build
-   ```
-5. **Start the application**:
-   ```bash
-   npm run start:prod
-   ```
-
-For detailed deployment instructions, see [Deployment Guide](./docs/deployment.md).
-
-### Supported Platforms
-
-- **Railway**: Recommended for easy PostgreSQL integration
-- **Render**: Good for web services with managed PostgreSQL
-- **Vercel**: Serverless (note: limitations with long-running processes)
-- **AWS/GCP/Azure**: Self-managed deployments
-
 ## Features
 
 ### Casino Discovery
@@ -318,31 +287,3 @@ For detailed deployment instructions, see [Deployment Guide](./docs/deployment.m
 - Research status management
 - Missing casino counts
 - Pending comparison counts
-
-## Contributing
-
-1. Follow the coding guidelines in [AGENT.md](./AGENT.md)
-2. Write tests for new features
-3. Ensure all tests pass
-4. Update documentation as needed
-5. Follow Clean Architecture principles
-
-## Documentation
-
-- [Local Setup Guide](./docs/local-setup.md) - Detailed local development setup
-- [Testing Guide](./docs/testing.md) - Testing guidelines and best practices
-- [Deployment Guide](./docs/deployment.md) - Production deployment instructions
-- [API Specification](../AI-context/api.json) - OpenAPI specification
-
-## License
-
-UNLICENSED
-
-## Support
-
-For issues and questions:
-
-- Check the documentation in `docs/`
-- Review application logs
-- Check Swagger UI for API details
-- Consult team documentation
