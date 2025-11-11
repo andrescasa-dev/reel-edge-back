@@ -1,0 +1,54 @@
+[
+  {
+    "casinodb_id": 1132,
+    "Offer_Name": "24 Hour Lossback - Earn back 100% of your net losses back on Slot Games, up to $1,000 in Casino Credits!",
+    "offer_type": "Lossback",
+    "Expected_Deposit": 1000,
+    "Expected_Bonus": 1000,
+    "Name": "Golden Nugget",
+    "states_id": 5,
+    "state": {
+      "Name": "West Virginia",
+      "Abbreviation": "WV"
+    }
+  },
+  {
+    "casinodb_id": 1156,
+    "Offer_Name": "Casino New Player Bonus: 100% Up to $1,000",
+    "offer_type": "Deposit (Cashable)",
+    "Expected_Deposit": 1000,
+    "Expected_Bonus": 1000,
+    "Name": "Bet365",
+    "states_id": 2,
+    "state": {
+      "Name": "Pennsylvania",
+      "Abbreviation": "PA"
+    }
+  },
+  {
+    "casinodb_id": 1096,
+    "Offer_Name": "100% Deposit Match up to $1,000, and $25 Casino Bonus",
+    "offer_type": "Deposit (Cashable)",
+    "Expected_Deposit": 1000,
+    "Expected_Bonus": 1025,
+    "Name": "BetMGM",
+    "states_id": 2,
+    "state": {
+      "Name": "Pennsylvania",
+      "Abbreviation": "PA"
+    }
+  },
+  {
+    "casinodb_id": 1119,
+    "Offer_Name": "200% Deposit Bonus, max $200 bonus & 75 Bonus Spins on Cash Eruption",
+    "offer_type": "Deposit (Cashable)",
+    "Expected_Deposit": 100,
+    "Expected_Bonus": 200,
+    "Name": "Four Winds",
+    "states_id": 4,
+    "state": {
+      "Name": "Michigan",
+      "Abbreviation": "MI"
+    }
+  }
+]

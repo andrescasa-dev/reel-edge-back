@@ -1,0 +1,3 @@
+# Global exception filters
+# Will contain HttpExceptionFilter
+
