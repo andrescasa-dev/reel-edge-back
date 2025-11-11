@@ -1,17 +1,17 @@
 import { Injectable } from '@nestjs/common';
-import { PrismaService } from '../../../shared/infrastructure/database/prisma/prisma.service';
-import {
-  IMissingCasinoRepository,
-  CreateMissingCasinoData,
-  UpdateMissingCasinoData,
-} from '../../domain/interfaces/missing-casino.repository.interface';
-import { MissingCasino } from '../../domain/entities/missing-casino.entity';
+import { Prisma, MissingCasino as PrismaMissingCasino } from '@prisma/client';
 import { StateAbbreviation } from '../../../shared/domain/enums/state.enum';
 import {
-  MissingCasinoNotFoundException,
   DatabaseException,
+  MissingCasinoNotFoundException,
 } from '../../../shared/domain/exceptions';
-import { Prisma, MissingCasino as PrismaMissingCasino } from '@prisma/client';
+import { PrismaService } from '../../../shared/infrastructure/database/prisma/prisma.service';
+import { MissingCasino } from '../../domain/entities/missing-casino.entity';
+import {
+  CreateMissingCasinoData,
+  IMissingCasinoRepository,
+  UpdateMissingCasinoData,
+} from '../../domain/interfaces/missing-casino.repository.interface';
 
 /**
  * Missing Casino Repository Implementation
@@ -57,7 +57,8 @@ export class MissingCasinoRepository implements IMissingCasinoRepository {
         where,
         orderBy: { discoveredAt: 'desc' },
         take: filters?.limit !== undefined ? Number(filters.limit) : undefined,
-        skip: filters?.offset !== undefined ? Number(filters.offset) : undefined,
+        skip:
+          filters?.offset !== undefined ? Number(filters.offset) : undefined,
       });
 
       return missingCasinos.map((casino) => this.toDomain(casino));

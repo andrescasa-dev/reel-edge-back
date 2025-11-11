@@ -1,3 +1,5 @@
+[![Captura-de-pantalla-2025-11-11-041118.png](https://i.postimg.cc/25mRbv62/Captura-de-pantalla-2025-11-11-041118.png)](https://postimg.cc/nXdwNXqD)
+
 # Casino Research Assistant Backend
 
 A NestJS backend application for managing casino research data, discovering missing casinos, and comparing promotions across NJ, MI, PA, and WV jurisdictions.
@@ -296,3 +298,9 @@ See [AGENT.md](./AGENT.md) for detailed coding guidelines.
 - Automatic request queuing when rate limit is reached
 - Handles Perplexity API rate limit errors with retry logic
 - Prevents API throttling and ensures reliable external API usage
+
+# Screenshots
+
+[![Captura-de-pantalla-2025-11-11-041855.png](https://i.postimg.cc/xCvPkJXG/Captura-de-pantalla-2025-11-11-041855.png)](https://postimg.cc/MMGBNGbX)
+[![Captura-de-pantalla-2025-11-11-041253.png](https://i.postimg.cc/j5HD6yQW/Captura-de-pantalla-2025-11-11-041253.png)](https://postimg.cc/7GLPwGRD)
+[![Captura-de-pantalla-2025-11-11-041133.png](https://i.postimg.cc/5yjM9V0V/Captura-de-pantalla-2025-11-11-041133.png)](https://postimg.cc/Fkt6Gw3W)
