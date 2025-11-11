@@ -287,3 +287,12 @@ See [AGENT.md](./AGENT.md) for detailed coding guidelines.
 - Research status management
 - Missing casino counts
 - Pending comparison counts
+
+### Rate Limiting
+
+- Sliding window algorithm with request queue
+- Configurable requests per minute (default: 20 RPM)
+- Minimum delay enforcement between requests (3 seconds)
+- Automatic request queuing when rate limit is reached
+- Handles Perplexity API rate limit errors with retry logic
+- Prevents API throttling and ensures reliable external API usage
