@@ -6,10 +6,11 @@ import { PerplexitySearchClient } from './infrastructure/external-apis/perplexit
 import { MissingCasinoRepository } from './infrastructure/repositories/missing-casino.repository';
 import { CasinoDiscoveryService } from './application/services/casino-discovery.service';
 import { CasinoSearchController } from './presentation/controllers/casino-search.controller';
+import { MissingCasinosController } from './presentation/controllers/missing-casinos.controller';
 
 @Module({
   imports: [ConfigModule],
-  controllers: [CasinoSearchController],
+  controllers: [CasinoSearchController, MissingCasinosController],
   providers: [
     PerplexitySearchClient,
     RateLimiterService,

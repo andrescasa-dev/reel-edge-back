@@ -15,7 +15,6 @@ describe('CasinoDiscoveryService', () => {
   let service: CasinoDiscoveryService;
   let perplexitySearchClient: jest.Mocked<PerplexitySearchClient>;
   let missingCasinoRepository: MissingCasinoRepository;
-  let casinoRepository: CasinoRepository;
   let prismaService: PrismaService;
 
   beforeAll(async () => {
@@ -47,7 +46,6 @@ describe('CasinoDiscoveryService', () => {
     missingCasinoRepository = module.get<MissingCasinoRepository>(
       MissingCasinoRepository,
     );
-    casinoRepository = module.get<CasinoRepository>(CasinoRepository);
     prismaService = module.get<PrismaService>(PrismaService);
   });
 
@@ -466,6 +464,7 @@ describe('CasinoDiscoveryService', () => {
       const result = await service.enrichCasinoMetadata(casino);
 
       expect(result).toEqual(casino);
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(perplexitySearchClient.searchCasinos).not.toHaveBeenCalled();
     });
 
@@ -493,6 +492,7 @@ describe('CasinoDiscoveryService', () => {
 
       expect(result.website).toBe('https://incomplete.com');
       expect(result.regulatoryId).toBe('REG-456');
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(perplexitySearchClient.searchCasinos).toHaveBeenCalledWith(
         StateAbbreviation.NJ,
       );
