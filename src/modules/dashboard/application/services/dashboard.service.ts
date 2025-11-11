@@ -120,26 +120,46 @@ export class DashboardService {
 
   /**
    * Start research for all states
+   * Executes the research process asynchronously in the background
+   * Returns immediately without waiting for the process to complete
    */
-  async startResearch(): Promise<{
+  startResearch(): Promise<{
     success: boolean;
     message: string;
     status: ResearchStatus;
   }> {
     this.logger.log('Starting research via dashboard service');
 
-    try {
-      await this.researchOrchestrationService.startFullResearch();
-
-      return {
+    // Check if research is already in progress
+    const currentStatus = this.researchOrchestrationService.getResearchStatus();
+    if (currentStatus === ResearchStatus.RESEARCHING) {
+      this.logger.warn('Research already in progress');
+      return Promise.resolve({
         success: true,
-        message: 'Research started successfully',
+        message: 'Research is already in progress',
         status: ResearchStatus.RESEARCHING,
-      };
-    } catch (error) {
-      this.logger.error('Failed to start research', error);
-      throw error;
+      });
     }
+
+    // Start the research process asynchronously in the background
+    // Don't await - let it run in the background
+    this.researchOrchestrationService
+      .startFullResearch()
+      .then(() => {
+        this.logger.log('Research process completed successfully');
+      })
+      .catch((error) => {
+        // Handle errors in background - only log, don't throw
+        // The process will update status to IDLE in its finally block
+        this.logger.error('Research process failed in background', error);
+      });
+
+    // Return immediately
+    return Promise.resolve({
+      success: true,
+      message: 'Research started successfully',
+      status: ResearchStatus.RESEARCHING,
+    });
   }
 
   /**
