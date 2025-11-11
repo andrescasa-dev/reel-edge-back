@@ -1,19 +1,18 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { PrismaService } from '../../../../shared/infrastructure/database/prisma/prisma.service';
-import { PromotionComparisonRepository } from '../../../infrastructure/repositories/promotion-comparison.repository';
-import { StateAbbreviation } from '../../../../shared/domain/enums/state.enum';
-import { ComparisonType } from '../../../../shared/domain/enums/comparison-type.enum';
-import { ComparisonStatus } from '../../../../shared/domain/enums/comparison-status.enum';
+import { cleanDatabase } from '../../../../../../test/helpers/database-cleanup.helper';
 import { Casino } from '../../../../shared/domain/entities/casino.entity';
-import { Promotion } from '../../../domain/entities/promotion.entity';
+import { ComparisonStatus } from '../../../../shared/domain/enums/comparison-status.enum';
+import { ComparisonType } from '../../../../shared/domain/enums/comparison-type.enum';
+import { StateAbbreviation } from '../../../../shared/domain/enums/state.enum';
+import { ComparisonNotFoundException } from '../../../../shared/domain/exceptions';
+import { PrismaService } from '../../../../shared/infrastructure/database/prisma/prisma.service';
+import { CasinoRepository } from '../../../../shared/infrastructure/repositories/casino.repository';
 import { PromotionComparison } from '../../../domain/entities/promotion-comparison.entity';
-import { ReelEdgeData } from '../../../../shared/infrastructure/external-apis/reel-edge/reel-edge.client';
+import { Promotion } from '../../../domain/entities/promotion.entity';
 import { PerplexitySonarClient } from '../../../infrastructure/external-apis/perplexity/perplexity-sonar.client';
 import { DiscoveredPromotion } from '../../../infrastructure/external-apis/perplexity/perplexity-sonar.types';
+import { PromotionComparisonRepository } from '../../../infrastructure/repositories/promotion-comparison.repository';
 import { PromotionResearchService } from '../promotion-research.service';
-import { cleanDatabase } from '../../../../../../test/helpers/database-cleanup.helper';
-import { ComparisonNotFoundException } from '../../../../shared/domain/exceptions';
-import { CasinoRepository } from '../../../../shared/infrastructure/repositories/casino.repository';
 
 describe('PromotionResearchService', () => {
   let service: PromotionResearchService;
@@ -48,7 +47,9 @@ describe('PromotionResearchService', () => {
     }).compile();
 
     service = module.get<PromotionResearchService>(PromotionResearchService);
-    perplexitySonarClient = module.get(PerplexitySonarClient);
+    perplexitySonarClient = module.get<jest.Mocked<PerplexitySonarClient>>(
+      PerplexitySonarClient,
+    );
     promotionComparisonRepository = module.get<PromotionComparisonRepository>(
       PromotionComparisonRepository,
     );
@@ -142,7 +143,6 @@ describe('PromotionResearchService', () => {
 
   describe('researchPromotionsForCasinoBatch', () => {
     let testCasino: Casino;
-    let cachedReelEdgeData: ReelEdgeData;
 
     beforeEach(async () => {
       testCasino = await casinoRepository.create({
@@ -151,24 +151,19 @@ describe('PromotionResearchService', () => {
         state: StateAbbreviation.NJ,
         website: 'https://testcasino.com',
       });
-
-      cachedReelEdgeData = {
-        casinos: [testCasino],
-        promotions: new Map(),
-      };
     });
 
     it('should return empty result for empty casino batch', async () => {
       const result = await service.researchPromotionsForCasinoBatch(
         [],
         new Map(),
-        cachedReelEdgeData,
       );
 
       expect(result.processed).toBe(0);
       expect(result.created).toBe(0);
       expect(result.filtered).toBe(0);
       expect(result.comparisons).toHaveLength(0);
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(perplexitySonarClient.queryPromotionsBatch).not.toHaveBeenCalled();
     });
 
@@ -196,13 +191,13 @@ describe('PromotionResearchService', () => {
       const result = await service.researchPromotionsForCasinoBatch(
         [testCasino],
         existingPromotions,
-        cachedReelEdgeData,
       );
 
       expect(result.processed).toBe(1);
       expect(result.created).toBe(1);
       expect(result.filtered).toBe(0);
       expect(result.comparisons).toHaveLength(1);
+      // eslint-disable-next-line @typescript-eslint/unbound-method
       expect(perplexitySonarClient.queryPromotionsBatch).toHaveBeenCalledTimes(
         1,
       );
@@ -239,7 +234,6 @@ describe('PromotionResearchService', () => {
       const result = await service.researchPromotionsForCasinoBatch(
         [testCasino],
         existingPromotions,
-        cachedReelEdgeData,
       );
 
       expect(result.processed).toBe(1);
@@ -279,7 +273,6 @@ describe('PromotionResearchService', () => {
       const result = await service.researchPromotionsForCasinoBatch(
         [testCasino],
         existingPromotions,
-        cachedReelEdgeData,
       );
 
       expect(result.processed).toBe(1);
@@ -319,7 +312,6 @@ describe('PromotionResearchService', () => {
       const result = await service.researchPromotionsForCasinoBatch(
         [testCasino],
         existingPromotions,
-        cachedReelEdgeData,
       );
 
       expect(result.processed).toBe(1);
@@ -367,7 +359,6 @@ describe('PromotionResearchService', () => {
       const result = await service.researchPromotionsForCasinoBatch(
         [testCasino, casino2],
         existingPromotions,
-        cachedReelEdgeData,
       );
 
       expect(result.processed).toBe(2);
@@ -382,18 +373,13 @@ describe('PromotionResearchService', () => {
       );
 
       await expect(
-        service.researchPromotionsForCasinoBatch(
-          [testCasino],
-          new Map(),
-          cachedReelEdgeData,
-        ),
+        service.researchPromotionsForCasinoBatch([testCasino], new Map()),
       ).rejects.toThrow();
     });
   });
 
   describe('getPromotionComparisons', () => {
     let testCasino: Casino;
-    let comparison: PromotionComparison;
 
     beforeEach(async () => {
       testCasino = await casinoRepository.create({
@@ -409,7 +395,7 @@ describe('PromotionResearchService', () => {
         expectedBonus: 200,
       });
 
-      comparison = await promotionComparisonRepository.create({
+      await promotionComparisonRepository.create({
         casinoId: testCasino.id,
         currentPromotion: null,
         discoveredPromotion,
@@ -431,9 +417,9 @@ describe('PromotionResearchService', () => {
         status: ComparisonStatus.PENDING,
       });
 
-      expect(result.comparisons.every((c) => c.status === ComparisonStatus.PENDING)).toBe(
-        true,
-      );
+      expect(
+        result.comparisons.every((c) => c.status === ComparisonStatus.PENDING),
+      ).toBe(true);
     });
 
     it('should filter by comparison type', async () => {
@@ -442,7 +428,9 @@ describe('PromotionResearchService', () => {
       });
 
       expect(
-        result.comparisons.every((c) => c.comparisonType === ComparisonType.NEW),
+        result.comparisons.every(
+          (c) => c.comparisonType === ComparisonType.NEW,
+        ),
       ).toBe(true);
     });
 
@@ -548,4 +536,3 @@ describe('PromotionResearchService', () => {
     });
   });
 });
-
